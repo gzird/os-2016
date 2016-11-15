@@ -127,7 +127,7 @@ def read_dirtree(dirname):
     user = end_time[0] - start_time[0]
     system = end_time[1] - start_time[1]
     real = end_time[4] - start_time[4]
-    mbs = (float(totalread) / (1024 * 1024)) / real
+    mbs = (float(totalread) / (1024 * 1024)) / (real + 0.01)
 
     sys.stderr.write("read dir %s in %.2f %.2f MB/s\n" % (orig_dirname,
                       real, mbs))
@@ -185,7 +185,7 @@ def clean_directory(dataset, dirname):
     system = end_time[1] - start_time[1]
     real = end_time[4] - start_time[4]
     total_bytes = total_bytes / (1024 * 1024)
-    mbs = total_bytes / real
+    mbs = total_bytes / (real + 0.01)
     sys.stderr.write("clean %s %dMB in %.2f seconds (%.2f MB/s)\n" % (dirname,
                       total_bytes, real, mbs))
     return (user, system, mbs)
@@ -250,7 +250,7 @@ def run_directory(dataset, dirname, operation, unlink=False, readfirst=False):
     system = end_time[1] - start_time[1]
     real = end_time[4] - start_time[4]
     total_bytes = total_bytes / (1024 * 1024)
-    mbs = total_bytes / real
+    mbs = total_bytes / (real + 0.01)
     sys.stderr.write("%s %s %dMB in %.2f seconds (%.2f MB/s)\n" % (operation,
                      dirname, total_bytes, real, mbs))
     return (user, system, mbs)
