@@ -143,7 +143,6 @@ arch/arm26/lib/io-readsl.S 1503
 arch/arm26/lib/io-readsw.S 1849
 arch/arm26/lib/io-writesb.S 2175
 arch/arm26/lib/io-writesl.S 999
-arch/arm26/lib/io-writesw.S 2241
 arch/arm26/lib/kbd.c 8115
 arch/arm26/lib/lib1funcs.S 10009
 arch/arm26/lib/longlong.h 6539
@@ -691,7 +690,6 @@ arch/avr32/lib/io-readsl.S 542
 arch/avr32/lib/io-readsw.S 789
 arch/avr32/lib/io-writesb.S 808
 arch/avr32/lib/io-writesl.S 405
-arch/avr32/lib/io-writesw.S 644
 arch/avr32/lib/libgcc.h 1034
 arch/avr32/lib/longlong.h 3341
 arch/avr32/lib/Makefile 374
@@ -1089,7 +1087,6 @@ arch/i386/kernel/.gitignore 13
 arch/i386/kernel/head.S 16066
 arch/i386/kernel/hpet.c 1591
 arch/i386/kernel/i386_ksyms.c 762
-arch/i386/kernel/i387.c 12967
 arch/i386/kernel/i8237.c 1547
 arch/i386/kernel/i8253.c 3189
 arch/i386/kernel/i8259.c 11049
@@ -2256,18 +2253,6 @@ arch/powerpc/boot/addnote.c 5117
 arch/powerpc/boot/addRamDisk.c 9120
 arch/powerpc/boot/crt0.S 1374
 arch/powerpc/boot/div64.S 1891
-arch/powerpc/boot/dts/lite5200b.dts 7859
-arch/powerpc/boot/dts/lite5200.dts 7634
-arch/powerpc/boot/dts/mpc7448hpc2.dts 4432
-arch/powerpc/boot/dts/mpc8272ads.dts 9043
-arch/powerpc/boot/dts/mpc8349emds.dts 7357
-arch/powerpc/boot/dts/mpc8360emds.dts 8391
-arch/powerpc/boot/dts/mpc8540ads.dts 5824
-arch/powerpc/boot/dts/mpc8541cds.dts 5658
-arch/powerpc/boot/dts/mpc8548cds.dts 6637
-arch/powerpc/boot/dts/mpc8555cds.dts 5660
-arch/powerpc/boot/dts/mpc8560ads.dts 6759
-arch/powerpc/boot/dts/mpc8641_hpcn.dts 7400
 arch/powerpc/boot/dummy.c 30
 arch/powerpc/boot/elf.h 3808
 arch/powerpc/boot/flatdevtree.c 21435
@@ -2301,7 +2286,6 @@ arch/powerpc/configs/chrp32_defconfig 32273
 arch/powerpc/configs/g5_defconfig 37744
 arch/powerpc/configs/iseries_defconfig 25363
 arch/powerpc/configs/linkstation_defconfig 36684
-arch/powerpc/configs/lite5200_defconfig 18933
 arch/powerpc/configs/maple_defconfig 27223
 arch/powerpc/configs/mpc7448_hpc2_defconfig 21211
 arch/powerpc/configs/mpc8360emds_defconfig 21870
@@ -2725,7 +2709,6 @@ arch/ppc/configs/gemini_defconfig 11440
 arch/ppc/configs/hdpu_defconfig 17843
 arch/ppc/configs/IVMS8_defconfig 9394
 arch/ppc/configs/katana_defconfig 18701
-arch/ppc/configs/lite5200_defconfig 9021
 arch/ppc/configs/lopec_defconfig 15934
 arch/ppc/configs/luan_defconfig 11950
 arch/ppc/configs/ml300_defconfig 13392
@@ -2807,8 +2790,6 @@ arch/ppc/platforms/ivms8.h 1623
 arch/ppc/platforms/katana.c 25773
 arch/ppc/platforms/katana.h 7940
 arch/ppc/platforms/lantec.h 388
-arch/ppc/platforms/lite5200.c 5954
-arch/ppc/platforms/lite5200.h 598
 arch/ppc/platforms/lopec.c 9815
 arch/ppc/platforms/lopec.h 1145
 arch/ppc/syslib/cpc700.h 3178
@@ -3237,7 +3218,6 @@ arch/sh/kernel/timers/timer.c 1118
 arch/sh/kernel/timers/timer-cmt.c 4547
 arch/sh/kernel/timers/timer-mtu2.c 4713
 arch/sh/kernel/timers/timer-tmu.c 4138
-arch/sh/kernel/traps.c 21738
 arch/sh/kernel/vsyscall/.gitignore 13
 arch/sh/kernel/vsyscall/Makefile 1260
 arch/sh/kernel/vsyscall/vsyscall.c 3309
