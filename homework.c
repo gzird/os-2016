@@ -69,6 +69,7 @@ struct blkdev *cache_create(struct blkdev *d)
  */
 fd_set *inode_map;              /* = malloc(sb.inode_map_size * FS_BLOCK_SIZE); */
 fd_set *block_map;
+fd_set *inode_region;
 
 
 /* init - this is called once by the FUSE framework at startup. Ignore
@@ -84,7 +85,37 @@ void* fs_init(struct fuse_conn_info *conn)
         exit(1);
 
     /* your code here */
-    
+    inode_map = (fd_set *) malloc(sb.inode_map_sz * FS_BLOCK_SIZE);
+    if (inode_map == NULL)
+    {
+        fprintf(stderr, "malloc failed for inode_map: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    block_map = (fd_set *) malloc(sb.block_map_sz * FS_BLOCK_SIZE);
+    if (block_map == NULL)
+    {
+        fprintf(stderr, "malloc failed for block_map: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    inode_region = (fd_set *) malloc(sb.inode_region_sz * FS_BLOCK_SIZE);
+    if (inode_region == NULL)
+    {
+        fprintf(stderr, "malloc failed for inode_region: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    /*  read bitmaps and inodes into memory
+        the compiler will optimize the repeated additions bellow
+    */
+    if (disk->ops->read(disk, 1, sb.inode_map_sz, inode_map) < 0)
+        exit(1);
+    if (disk->ops->read(disk, 1 + sb.inode_map_sz, sb.block_map_sz, block_map) < 0)
+        exit(1);
+    if (disk->ops->read(disk, 1 + sb.inode_map_sz + sb.block_map_sz, sb.inode_region_sz, inode_region) < 0)
+        exit(1);
+
     if (homework_part > 3)
         disk = cache_create(disk);
 
