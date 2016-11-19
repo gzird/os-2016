@@ -16,6 +16,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <libgen.h>
 
 #include "fs7600.h"
 #include "blkdev.h"
@@ -364,4 +365,32 @@ struct fuse_operations fs_ops = {
     .release = fs_release,
     .statfs = fs_statfs,
 };
+
+/*
+ *  Helper functions
+ */
+
+/*
+ * Path transtation
+ */
+
+int path_translate(const char *path, struct *path_trans)
+{
+    if (path == NULL || strlen(path) == 0)
+    {
+        return -EOPNOTSUPP;
+    }
+
+    /* break the string into componets
+     * strdup is safe for the purposes of this assignment
+     */
+    char *dirc, *basec, *bname, *dname;
+
+    dirc  = strdup(path);
+    basec = strdup(path);
+    if (!dirc || !basec)
+        return -ENOMEM;
+
+    return 0;
+}
 
