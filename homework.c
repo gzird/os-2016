@@ -16,7 +16,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
-#include <libgen.h>
 
 #include "fs7600.h"
 #include "blkdev.h"
