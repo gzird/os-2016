@@ -49,6 +49,7 @@ struct fs7600_inode {
 };
 
 enum {INODES_PER_BLK = FS_BLOCK_SIZE / sizeof(struct fs7600_inode)};
+enum {BITS_PER_BLK   = FS_BLOCK_SIZE * 8};
 
 #endif
 
