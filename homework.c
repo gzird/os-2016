@@ -16,6 +16,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <stdint.h>
 
 #include "fs7600.h"
 #include "blkdev.h"
@@ -68,8 +69,12 @@ struct blkdev *cache_create(struct blkdev *d)
  *   FD_SET(##, block_map);
  */
 fd_set *inode_map;              /* = malloc(sb.inode_map_size * FS_BLOCK_SIZE); */
-fd_set *block_map;
-fd_set *inode_region;
+fd_set *data_map;
+struct fs7600_inode *inodes;
+
+/* starting points in block numbers */
+const uint32_t inode_map_start = 1;
+uint32_t data_map_start, inode_start, data_start;
 
 
 /* init - this is called once by the FUSE framework at startup. Ignore
@@ -82,9 +87,12 @@ void* fs_init(struct fuse_conn_info *conn)
 {
     struct fs7600_super sb;
     if (disk->ops->read(disk, 0, 1, &sb) < 0)
+    {
+        fprintf(stderr, "failed to read superblock from disk.\n");
         exit(1);
+    }
 
-    /* your code here */
+    /* allocate memory for bitmaps and inodes */
     inode_map = (fd_set *) malloc(sb.inode_map_sz * FS_BLOCK_SIZE);
     if (inode_map == NULL)
     {
@@ -92,29 +100,42 @@ void* fs_init(struct fuse_conn_info *conn)
         exit(1);
     }
 
-    block_map = (fd_set *) malloc(sb.block_map_sz * FS_BLOCK_SIZE);
-    if (block_map == NULL)
+    data_map = (fd_set *) malloc(sb.block_map_sz * FS_BLOCK_SIZE);
+    if (data_map == NULL)
     {
-        fprintf(stderr, "malloc failed for block_map: %s\n", strerror(errno));
+        fprintf(stderr, "malloc failed for data_map: %s\n", strerror(errno));
         exit(1);
     }
 
-    inode_region = (fd_set *) malloc(sb.inode_region_sz * FS_BLOCK_SIZE);
-    if (inode_region == NULL)
+    inodes = (struct fs7600_inode *) malloc(sb.inode_region_sz * FS_BLOCK_SIZE);
+    if (inodes == NULL)
     {
-        fprintf(stderr, "malloc failed for inode_region: %s\n", strerror(errno));
+        fprintf(stderr, "malloc failed for inodes: %s\n", strerror(errno));
         exit(1);
     }
 
-    /*  read bitmaps and inodes into memory
-        the compiler will optimize the repeated additions bellow
-    */
-    if (disk->ops->read(disk, 1, sb.inode_map_sz, inode_map) < 0)
+    /*  read bitmaps and inodes into memory */
+    data_map_start = inode_map_start + sb.inode_map_sz;
+    inode_start    = data_map_start  + sb.block_map_sz;
+    data_start     = inode_start     + sb.inode_region_sz;
+
+    if (disk->ops->read(disk, inode_map_start, sb.inode_map_sz, inode_map) < 0)
+    {
+        fprintf(stderr, "failed to read inode map from disk.\n");
         exit(1);
-    if (disk->ops->read(disk, 1 + sb.inode_map_sz, sb.block_map_sz, block_map) < 0)
+    }
+
+    if (disk->ops->read(disk, data_map_start, sb.block_map_sz, data_map) < 0)
+    {
+        fprintf(stderr, "failed to read data map from disk.\n");
         exit(1);
-    if (disk->ops->read(disk, 1 + sb.inode_map_sz + sb.block_map_sz, sb.inode_region_sz, inode_region) < 0)
+    }
+
+    if (disk->ops->read(disk, inode_start, sb.inode_region_sz, inodes) < 0)
+    {
+       fprintf(stderr, "failed to read inodes from disk.\n");
         exit(1);
+    }
 
     if (homework_part > 3)
         disk = cache_create(disk);
@@ -373,8 +394,13 @@ struct fuse_operations fs_ops = {
  * Path transtation
  */
 
-int path_translate(const char *path, struct *path_trans)
+int path_translate(const char *path, struct path_trans *pt)
 {
+    uint32_t dblock_offset, inode_index;
+    int i;
+    const char * delimiter = "/";
+    char *pathc, *token;
+
     if (path == NULL || strlen(path) == 0)
     {
         return -EOPNOTSUPP;
@@ -383,12 +409,39 @@ int path_translate(const char *path, struct *path_trans)
     /* break the string into componets
      * strdup is safe for the purposes of this assignment
      */
-    char *dirc, *basec, *bname, *dname;
-
-    dirc  = strdup(path);
-    basec = strdup(path);
-    if (!dirc || !basec)
+    pathc = strdup(path);
+    if (!pathc)
         return -ENOMEM;
+
+    /* path is the rootdir, hence return it */
+    if (strcmp(pathc, delimiter) == 0)
+    {
+        pt->inode = 1;
+        return 0;
+    }
+
+    /* allocate memory for one data block */
+    struct fs7600_dirent * dblock = (struct fs7600_dirent *) malloc (FS_BLOCK_SIZE);
+    if (!dblock)
+        return -ENOMEM;
+
+    /* start looking in the rootdir contents */
+    inode_index = 0;
+    while (token = strtok(pathc, delimiter))
+    {
+        /* fetch the data block from the disk */
+        dblock_offset = inodes[inode_index].direct[0];
+        disk->ops->read(disk, data_start + dblock_offset, 1, dblock);
+
+        /* try to find the entry's inode number */
+        for (i = 0; i < DIRENT_PER_BLK; i++)
+        {
+            if (dblock[i].valid && strcmp(token, dblock[i].name) == 0)
+            {
+                target_inode = dblock[i].inode;
+            }
+        }
+    }
 
     return 0;
 }

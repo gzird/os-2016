@@ -48,8 +48,14 @@ struct fs7600_inode {
     uint32_t pad[3];            /* 64 bytes per inode */
 };
 
-enum {INODES_PER_BLK = FS_BLOCK_SIZE / sizeof(struct fs7600_inode)};
+struct path_trans {
+    uint32_t inode;
+};
+
 enum {BITS_PER_BLK   = FS_BLOCK_SIZE * 8};
+enum {INODE_SIZE     = sizeof(struct fs7600_inode)};
+enum {DIRENT_PER_BLK = FS_BLOCK_SIZE / sizeof(struct fs7600_dirent)};
+enum {INODES_PER_BLK = FS_BLOCK_SIZE / sizeof(struct fs7600_inode)};
 
 #endif
 
