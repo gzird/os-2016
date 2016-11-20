@@ -400,6 +400,7 @@ int path_translate(const char *path, struct path_trans *pt)
     int i;
     const char * delimiter = "/";
     char *pathc, *token;
+    bool found;
 
     if (path == NULL || strlen(path) == 0)
     {
@@ -434,14 +435,22 @@ int path_translate(const char *path, struct path_trans *pt)
         disk->ops->read(disk, data_start + dblock_offset, 1, dblock);
 
         /* try to find the entry's inode number */
+        found = false;
         for (i = 0; i < DIRENT_PER_BLK; i++)
         {
             if (dblock[i].valid && strcmp(token, dblock[i].name) == 0)
             {
-                target_inode = dblock[i].inode;
+                inode_index  = dblock[i].inode;
+                found = true;
+                break;
             }
         }
     }
+
+    if (!found)
+        return -ENONET;
+
+    pt->inode = inode_index;
 
     return 0;
 }
