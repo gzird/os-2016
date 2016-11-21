@@ -196,6 +196,12 @@ static int fs_getattr(const char *path, struct stat *sb)
     sb->st_mtime = inodes[inode_index].mtime;
     sb->st_ctime = inodes[inode_index].ctime;
 
+    /* values not set */
+    // sb->st_dev     =
+    // sb->st_rdev    =
+    // sb->st_blksize =
+    // sb->st_blocks  =
+
     return SUCCESS;
 }
 
