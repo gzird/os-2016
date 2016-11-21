@@ -202,6 +202,9 @@ static int fs_getattr(const char *path, struct stat *sb)
     // sb->st_blksize =
     // sb->st_blocks  =
 
+    /*
+     * TODO: if path == /, set atime to time(NULL) ?
+     */
     return SUCCESS;
 }
 
