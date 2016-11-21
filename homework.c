@@ -179,6 +179,7 @@ void* fs_init(struct fuse_conn_info *conn)
 static int fs_getattr(const char *path, struct stat *sb)
 {
     struct path_trans pt;
+    struct fs7600_inode inode;
     uint32_t inode_index;
     int ret;
 
@@ -186,17 +187,19 @@ static int fs_getattr(const char *path, struct stat *sb)
     if (ret < 0)
         return ret;
 
+    inode_index  = pt.inode_index;
+    inode = inodes[inode_index];
+    /* zero out everything */
     memset(sb, 0, sizeof(struct fs7600_inode));
 
-    inode_index  = pt.inode_index;
     sb->st_ino   = inode_index;
-    sb->st_mode  = inodes[inode_index].mode;
+    sb->st_mode  = inode.mode;
     sb->st_nlink = 1;
-    sb->st_uid   = inodes[inode_index].uid;
-    sb->st_gid   = inodes[inode_index].gid;
-    sb->st_atime = inodes[inode_index].mtime;
-    sb->st_mtime = inodes[inode_index].mtime;
-    sb->st_ctime = inodes[inode_index].ctime;
+    sb->st_uid   = inode.uid;
+    sb->st_gid   = inode.gid;
+    sb->st_atime = inode.mtime;
+    sb->st_mtime = inode.mtime;
+    sb->st_ctime = inode.ctime;
 
     /* values not set */
     // sb->st_dev     =
@@ -205,7 +208,7 @@ static int fs_getattr(const char *path, struct stat *sb)
     // sb->st_blocks  =
 
     /*
-     * TODO: if path == /, set atime to time(NULL) ?
+     * TODO: if path == /, set atime to time(NULL)?
      */
     return SUCCESS;
 }
