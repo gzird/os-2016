@@ -186,6 +186,8 @@ static int fs_getattr(const char *path, struct stat *sb)
     if (ret < 0)
         return ret;
 
+    memset(sb, 0, sizeof(struct fs7600_inode));
+
     inode_index  = pt.inode_index;
     sb->st_ino   = inode_index;
     sb->st_mode  = inodes[inode_index].mode;
@@ -427,7 +429,7 @@ int path_translate(const char *path, struct path_trans *pt)
 {
     uint32_t i, block_number, inode_index;
     const char * delimiter = "/";
-    char *pathc, *pathcc, *token;
+    char *pathc, *token;
     bool found;
 
     if (path == NULL || strlen(path) == 0)
@@ -439,11 +441,6 @@ int path_translate(const char *path, struct path_trans *pt)
      * strdup is safe for the purposes of this assignment
      */
     pathc = strdup(path);
-    /* need to free the strdup memory. 
-     * pointer "pathc" is lost after replacing pathc with NULL later
-     * as required by strtok.
-     */
-    pathcc = pathc;
     if (!pathc)
         return -ENOMEM;
 
@@ -461,12 +458,9 @@ int path_translate(const char *path, struct path_trans *pt)
 
     /* point to the rootdir to start the search */
     inode_index = 1;
-    while (token = strtok(pathc, delimiter))
+    token = strtok(pathc, delimiter);
+    while (token)
     {
-        /* needed by strtok after getting the first token */
-        if (pathc)
-            pathc = NULL;
-
         /* search only inside directories */
         if (!S_ISDIR(inodes[inode_index].mode))
             return -ENOENT;
@@ -494,13 +488,15 @@ int path_translate(const char *path, struct path_trans *pt)
                 break;
             }
         }
+
+        token = strtok(NULL, delimiter);
     }
 
     if (!found)
         return -ENOENT;
 
     pt->inode_index = inode_index;
-    free(pathcc);
+    free(pathc);
 
     return 0;
 }
