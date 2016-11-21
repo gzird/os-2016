@@ -416,7 +416,7 @@ struct fuse_operations fs_ops = {
 
 int path_translate(const char *path, struct path_trans *pt)
 {
-    uint32_t i, dblock_offset, inode_index;
+    uint32_t i, block_number, inode_index;
     const char * delimiter = "/";
     char *pathc, *pathcc, *token;
     bool found;
@@ -463,13 +463,14 @@ int path_translate(const char *path, struct path_trans *pt)
             return -ENOENT;
 
         /* fetch the data block from the disk.
+         * data bitmap block is checked relative actual block number.
          * we should re-fetch the block even if it is the same 
          * in case some other process invalided it.
-         * TODO: Is the above logic ok? Because if the block is the same, we could save block fetch.
+         * TODO: Is the above logic ok? Because if the block is the same, we could save a block fetch.
          */
-        dblock_offset = inodes[inode_index].direct[0];
-        if (FD_ISSET(dblock_offset, data_map))
-            disk->ops->read(disk, dblock_offset, 1, dblock);
+        block_number = inodes[inode_index].direct[0];
+        if (FD_ISSET(block_number - data_start, data_map))
+            disk->ops->read(disk, block_number, 1, dblock);
         else
             return -ENOENT;
 
