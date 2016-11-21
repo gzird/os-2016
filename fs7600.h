@@ -49,7 +49,7 @@ struct fs7600_inode {
 };
 
 struct path_trans {
-    uint32_t inode;
+    uint32_t inode_index;
 };
 
 enum {BITS_PER_BLK   = FS_BLOCK_SIZE * 8};

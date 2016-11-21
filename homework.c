@@ -21,6 +21,8 @@
 #include "fs7600.h"
 #include "blkdev.h"
 
+/* prototypes */
+int path_translate(const char *, struct path_trans *);
 
 extern int homework_part;       /* set by '-part n' command-line option */
 
@@ -176,7 +178,25 @@ void* fs_init(struct fuse_conn_info *conn)
  */
 static int fs_getattr(const char *path, struct stat *sb)
 {
-    return -EOPNOTSUPP;
+    struct path_trans pt;
+    uint32_t inode_index;
+    int ret;
+
+    ret = path_translate(path, &pt);
+    if (ret < 0)
+        return ret;
+
+    inode_index  = pt.inode_index;
+    sb->st_ino   = inode_index;
+    sb->st_mode  = inodes[inode_index].mode;
+    sb->st_nlink = 1;
+    sb->st_uid   = inodes[inode_index].uid;
+    sb->st_gid   = inodes[inode_index].gid;
+    sb->st_atime = inodes[inode_index].mtime;
+    sb->st_mtime = inodes[inode_index].mtime;
+    sb->st_ctime = inodes[inode_index].ctime;
+
+    return SUCCESS;
 }
 
 /* readdir - get directory contents.
@@ -396,10 +416,9 @@ struct fuse_operations fs_ops = {
 
 int path_translate(const char *path, struct path_trans *pt)
 {
-    uint32_t dblock_offset, inode_index;
-    int i;
+    uint32_t i, dblock_offset, inode_index;
     const char * delimiter = "/";
-    char *pathc, *token;
+    char *pathc, *pathcc, *token;
     bool found;
 
     if (path == NULL || strlen(path) == 0)
@@ -411,13 +430,18 @@ int path_translate(const char *path, struct path_trans *pt)
      * strdup is safe for the purposes of this assignment
      */
     pathc = strdup(path);
+    /* need to free the strdup memory. 
+     * pointer "pathc" is lost after replacing pathc with NULL later
+     * as required by strtok.
+     */
+    pathcc = pathc;
     if (!pathc)
         return -ENOMEM;
 
     /* path is the rootdir, hence return it */
     if (strcmp(pathc, delimiter) == 0)
     {
-        pt->inode = 1;
+        pt->inode_index = 1;
         return 0;
     }
 
@@ -426,15 +450,30 @@ int path_translate(const char *path, struct path_trans *pt)
     if (!dblock)
         return -ENOMEM;
 
-    /* start looking in the rootdir contents */
-    inode_index = 0;
+    /* point to the rootdir to start the search */
+    inode_index = 1;
     while (token = strtok(pathc, delimiter))
     {
-        /* fetch the data block from the disk */
-        dblock_offset = inodes[inode_index].direct[0];
-        disk->ops->read(disk, data_start + dblock_offset, 1, dblock);
+        /* needed by strtok after getting the first token */
+        if (pathc)
+            pathc = NULL;
 
-        /* try to find the entry's inode number */
+        /* search only inside directories */
+        if (!S_ISDIR(inodes[inode_index].mode))
+            return -ENOENT;
+
+        /* fetch the data block from the disk.
+         * we should re-fetch the block even if it is the same 
+         * in case some other process invalided it.
+         * TODO: Is the above logic ok? Because if the block is the same, we could save block fetch.
+         */
+        dblock_offset = inodes[inode_index].direct[0];
+        if (FD_ISSET(dblock_offset, data_map))
+            disk->ops->read(disk, dblock_offset, 1, dblock);
+        else
+            return -ENOENT;
+
+        /* try to find the entry's inode number for each component of the path */
         found = false;
         for (i = 0; i < DIRENT_PER_BLK; i++)
         {
@@ -448,9 +487,10 @@ int path_translate(const char *path, struct path_trans *pt)
     }
 
     if (!found)
-        return -ENONET;
+        return -ENOENT;
 
-    pt->inode = inode_index;
+    pt->inode_index = inode_index;
+    free(pathcc);
 
     return 0;
 }
