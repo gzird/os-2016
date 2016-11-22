@@ -380,6 +380,13 @@ int fs_utime(const char *path, struct utimbuf *ut)
 static int fs_read(const char *path, char *buf, size_t len, off_t offset,
 		    struct fuse_file_info *fi)
 {
+    struct path_trans pt;
+    uint32_t i, inode_index, block_number;
+    int ret;
+
+    ret = path_translate(path, &pt);
+    if (ret < 0)
+        return ret;
 
 
     return -EOPNOTSUPP;
