@@ -471,6 +471,9 @@ struct fuse_operations fs_ops = {
 
 /*
  * Path transtation
+ * on error returns: -EOPNOTSUPP, -ENOMEM, -ENOENT (most common)
+ * on success returns SUCCESS and the inode number of path,
+ * that is within the struct path_trans.
  */
 
 int path_translate(const char *path, struct path_trans *pt)
