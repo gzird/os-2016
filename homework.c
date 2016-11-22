@@ -23,6 +23,7 @@
 
 /* prototypes */
 int path_translate(const char *, struct path_trans *);
+void inode_to_stat(struct fs7600_inode *, uint32_t , struct stat *);
 
 extern int homework_part;       /* set by '-part n' command-line option */
 
@@ -187,25 +188,13 @@ static int fs_getattr(const char *path, struct stat *sb)
     if (ret < 0)
         return ret;
 
-    inode_index  = pt.inode_index;
-    inode = inodes[inode_index];
     /* zero out everything */
     memset(sb, 0, sizeof(struct fs7600_inode));
 
-    sb->st_ino   = inode_index;
-    sb->st_mode  = inode.mode;
-    sb->st_nlink = 1;
-    sb->st_uid   = inode.uid;
-    sb->st_gid   = inode.gid;
-    sb->st_atime = inode.mtime;
-    sb->st_mtime = inode.mtime;
-    sb->st_ctime = inode.ctime;
+    inode_index  = pt.inode_index;
+    inode = inodes[inode_index];
 
-    /* values not set */
-    // sb->st_dev     =
-    // sb->st_rdev    =
-    // sb->st_blksize =
-    // sb->st_blocks  =
+    inode_to_stat(&inode, inode_index, sb);
 
     /*
      * TODO: if path == /, set atime to time(NULL)?
@@ -225,7 +214,57 @@ static int fs_getattr(const char *path, struct stat *sb)
 static int fs_readdir(const char *path, void *ptr, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi)
 {
-    return -EOPNOTSUPP;
+    struct path_trans pt;
+    struct stat *sb;
+    uint32_t i, inode_index, block_number;
+    int ret;
+
+    ret = path_translate(path, &pt);
+    if (ret < 0)
+        return ret;
+
+    /* we check the validity of the inode and if the path is a directory.
+     * we separate the if checks that results in more CPU cycles in order to return the correct error message.
+     */
+    inode_index = pt.inode_index;
+    if (!FD_ISSET(inode_index, inode_map))
+        return -ENOENT;
+
+    if (!S_ISDIR(inodes[inode_index].mode))
+        return -ENOTDIR;
+
+    /* allocate memory for one data block
+     * there is lots of code duplication from path_translate
+     */
+    struct fs7600_dirent * dblock = (struct fs7600_dirent *) malloc (FS_BLOCK_SIZE);
+    if (!dblock)
+        return -ENOMEM;
+
+    /* fetch the inode data block and iterate in its contents */
+    block_number = inodes[inode_index].direct[0];
+    if (FD_ISSET(block_number - data_start, data_map))
+        disk->ops->read(disk, block_number, 1, dblock);
+    else
+        return -ENOENT;
+
+    /* TODO: replace NULL with a stat struct */
+    for (i = 0; i < DIRENT_PER_BLK; i++)
+    {
+        if (dblock[i].valid)
+        {
+            sb = (struct stat *) calloc(1, sizeof(struct stat));
+            if (!sb)
+                return -ENOMEM;
+
+            inode_index = dblock[i].inode;
+            inode_to_stat( &(inodes[inode_index]), inode_index, sb );
+            filler(ptr, dblock[i].name, sb, 0);
+        }
+    }
+
+    free(dblock);
+
+    return SUCCESS;
 }
 
 /* see description of Part 2. In particular, you can save information 
@@ -492,6 +531,7 @@ int path_translate(const char *path, struct path_trans *pt)
             }
         }
 
+        /* find the next token */
         token = strtok(NULL, delimiter);
     }
 
@@ -500,7 +540,30 @@ int path_translate(const char *path, struct path_trans *pt)
 
     pt->inode_index = inode_index;
     free(pathc);
+    free(dblock);
 
-    return 0;
+    return SUCCESS;
 }
 
+/* fill a stat struct with inode's information.
+ * the caller is responsible for zero'ing sb.
+ */
+void inode_to_stat(struct fs7600_inode * inode, uint32_t inode_index, struct stat * sb)
+{
+    sb->st_ino   = inode_index;
+    sb->st_mode  = inode->mode;
+    sb->st_nlink = 1;
+    sb->st_uid   = inode->uid;
+    sb->st_gid   = inode->gid;
+    sb->st_size  = inode->size;
+    sb->st_atime = inode->mtime;
+    sb->st_mtime = inode->mtime;
+    sb->st_ctime = inode->ctime;
+    /* values not set */
+    // sb->st_dev     =
+    // sb->st_rdev    =
+    // sb->st_blksize =
+    // sb->st_blocks  =
+
+    return;
+}
