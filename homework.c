@@ -395,7 +395,7 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
         return -EOPNOTSUPP;
     }
 
-    if (offset >= size)
+    if (offset >= size || len == 0)
         return 0;
 
     ret = path_translate(path, &pt);
