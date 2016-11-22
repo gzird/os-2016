@@ -180,7 +180,6 @@ void* fs_init(struct fuse_conn_info *conn)
 static int fs_getattr(const char *path, struct stat *sb)
 {
     struct path_trans pt;
-    struct fs7600_inode inode;
     uint32_t inode_index;
     int ret;
 
@@ -192,9 +191,8 @@ static int fs_getattr(const char *path, struct stat *sb)
     memset(sb, 0, sizeof(struct fs7600_inode));
 
     inode_index  = pt.inode_index;
-    inode = inodes[inode_index];
 
-    inode_to_stat(&inode, inode_index, sb);
+    inode_to_stat( &(inodes[inode_index]), inode_index, sb );
 
     /*
      * TODO: if path == /, set atime to time(NULL)?
