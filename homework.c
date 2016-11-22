@@ -245,7 +245,6 @@ static int fs_readdir(const char *path, void *ptr, fuse_fill_dir_t filler,
     else
         return -ENOENT;
 
-    /* TODO: replace NULL with a stat struct */
     for (i = 0; i < DIRENT_PER_BLK; i++)
     {
         if (dblock[i].valid)
@@ -381,6 +380,8 @@ int fs_utime(const char *path, struct utimbuf *ut)
 static int fs_read(const char *path, char *buf, size_t len, off_t offset,
 		    struct fuse_file_info *fi)
 {
+
+
     return -EOPNOTSUPP;
 }
 
