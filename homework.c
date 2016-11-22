@@ -213,7 +213,6 @@ static int fs_readdir(const char *path, void *ptr, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi)
 {
     struct path_trans pt;
-    struct stat *sb;
     uint32_t i, inode_index, block_number;
     int ret;
 
@@ -249,13 +248,14 @@ static int fs_readdir(const char *path, void *ptr, fuse_fill_dir_t filler,
     {
         if (dblock[i].valid)
         {
-            sb = (struct stat *) calloc(1, sizeof(struct stat));
-            if (!sb)
-                return -ENOMEM;
+            struct stat sb;
+            memset(&sb, 0, sizeof(sb));
 
             inode_index = dblock[i].inode;
-            inode_to_stat( &(inodes[inode_index]), inode_index, sb );
-            filler(ptr, dblock[i].name, sb, 0);
+
+            /* FUSE only checks inode number and mode of sb */
+            inode_to_stat( &(inodes[inode_index]), inode_index, &sb );
+            filler(ptr, dblock[i].name, &sb, 0);
         }
     }
 
@@ -471,6 +471,7 @@ struct fuse_operations fs_ops = {
 
 /*
  * Path transtation
+ *
  * on error returns: -EOPNOTSUPP, -ENOMEM, -ENOENT (most common)
  * on success returns SUCCESS and the inode number of path,
  * that is within the struct path_trans.
