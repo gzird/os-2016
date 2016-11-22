@@ -237,7 +237,7 @@ static int fs_readdir(const char *path, void *ptr, fuse_fill_dir_t filler,
     if (!dblock)
         return -ENOMEM;
 
-    /* fetch the inode data block and iterate in its contents */
+    /* fetch the inode's first data block and iterate in its contents */
     block_number = inodes[inode_index].direct[0];
     if (FD_ISSET(block_number - data_start, data_map))
         disk->ops->read(disk, block_number, 1, dblock);
@@ -381,12 +381,42 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
 		    struct fuse_file_info *fi)
 {
     struct path_trans pt;
-    uint32_t i, inode_index, block_number;
+    struct fs7600_inode inode;
+    uint32_t i, block_number;
+    size_t real_len;
+    off_t size;
     int ret;
+
+    /* Do some error checking */
+    if (offset < 0)
+    {
+        /* TODO: next message should be printed in debug only mode? */
+        fprintf(stderr, "Negative values for offset are not supported\n");
+        return -EOPNOTSUPP;
+    }
+
+    if (offset >= size)
+        return 0;
 
     ret = path_translate(path, &pt);
     if (ret < 0)
         return ret;
+
+    real_len = len;
+    size  = inode.size;
+    if (offset + len > size)
+        real_len = (len + offset) - size;
+
+    inode = inodes[pt.inode_index];
+
+    /* path must be a file */
+    if (!S_ISREG(inode.mode))
+        return -EISDIR;
+
+    /* based on the file size, we know that we have a valid offset and len.
+     * we locate the block that contains the offset and also its specific position
+     * in that block.
+     */
 
 
     return -EOPNOTSUPP;
