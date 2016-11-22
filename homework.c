@@ -404,8 +404,11 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
 
     real_len = len;
     size  = inode.size;
-    if (offset + len > size)
-        real_len = (len + offset) - size;
+    /* Same as: offset + len > size.
+     * Writing it in next form, we "cache" the (size - offset) calculation.
+     */
+    if (len > size - offset)
+        real_len = size - offset;
 
     inode = inodes[pt.inode_index];
 
