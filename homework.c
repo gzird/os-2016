@@ -526,7 +526,7 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
             /* there is the case where we start and end in the same block
              * so just grab the data and exit the switch.
              */
-            if (stay_in_direct && i==j)
+            if (stay_in_direct && i==j) //i == j, should be enought
             {
                 /* grab the data fom pos_start to pos_final */
                 memcpy(buf, &data[pos_start], pos_final - pos_start + 1);
@@ -615,8 +615,8 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
                 }
                 else
                 {
-                    memcpy(buf+nbytes, data, pos_final);
-                    nbytes += pos_final;
+                    memcpy(buf+nbytes, data, pos_final + 1);
+                    nbytes += pos_final + 1;
                 }
                 break;
             }
