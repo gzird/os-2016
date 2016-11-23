@@ -57,6 +57,7 @@ enum {INODE_SIZE     = sizeof(struct fs7600_inode)};
 enum {DIRENT_PER_BLK = FS_BLOCK_SIZE / sizeof(struct fs7600_dirent)};
 enum {INODES_PER_BLK = FS_BLOCK_SIZE / sizeof(struct fs7600_inode)};
 typedef enum {false, true} bool;
+typedef enum {DIRECT, INDIR_1, INDIR_2} case_start;
 
 #endif
 
