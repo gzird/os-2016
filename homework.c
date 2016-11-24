@@ -387,7 +387,21 @@ static int fs_chmod(const char *path, mode_t mode)
 
 int fs_utime(const char *path, struct utimbuf *ut)
 {
-    return -EOPNOTSUPP;
+    struct path_trans pt;
+    uint32_t inode_index;
+    int ret;
+
+    ret = path_translate(path, &pt);
+    if (ret < 0)
+        return ret;
+
+    /* we deal only with files and dirs */
+    inode_index = pt.inode_index;
+    inodes[inode_index].ctime  = ut->actime;
+    inodes[inode_index].mtime  = ut->modtime;
+
+    /* sync disk and memory */
+    return disk_write_inode(inodes[inode_index], inode_index);
 }
 
 /* read - read data from an open file.
