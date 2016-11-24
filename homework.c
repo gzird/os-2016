@@ -381,6 +381,7 @@ static int fs_chmod(const char *path, mode_t mode)
     else if (S_ISREG(inodes[inode_index].mode))
         inodes[inode_index].mode = mode | S_IFREG;
 
+    /* sync disk and memory */
     return disk_write_inode(inodes[inode_index], inode_index);
 }
 
