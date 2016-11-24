@@ -395,7 +395,6 @@ int fs_utime(const char *path, struct utimbuf *ut)
     if (ret < 0)
         return ret;
 
-    /* we deal only with files and dirs */
     inode_index = pt.inode_index;
     inodes[inode_index].ctime  = ut->actime;
     inodes[inode_index].mtime  = ut->modtime;
