@@ -984,7 +984,7 @@ void inode_to_stat(struct fs7600_inode * inode, uint32_t inode_index, struct sta
     sb->st_uid   = inode->uid;
     sb->st_gid   = inode->gid;
     sb->st_size  = inode->size;
-    sb->st_atime = inode->mtime;
+    sb->st_atime = inode->ctime;
     sb->st_mtime = inode->mtime;
     sb->st_ctime = inode->ctime;
     /* values not set */
