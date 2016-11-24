@@ -27,6 +27,7 @@ void inode_to_stat(struct fs7600_inode *, uint32_t , struct stat *);
 int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32_t i,
                            uint32_t j, uint32_t * idx_ary_second, bool fill_ary_second,
                            void * data);
+int disk_write_inode(struct fs7600_inode, uint32_t);
 
 extern int homework_part;       /* set by '-part n' command-line option */
 
@@ -365,7 +366,22 @@ static int fs_rename(const char *src_path, const char *dst_path)
  */
 static int fs_chmod(const char *path, mode_t mode)
 {
-    return -EOPNOTSUPP;
+    struct path_trans pt;
+    uint32_t inode_index;
+    int ret;
+
+    ret = path_translate(path, &pt);
+    if (ret < 0)
+        return ret;
+
+    /* we deal only with files and dirs */
+    inode_index = pt.inode_index;
+    if (S_ISDIR(inodes[inode_index].mode))
+        inodes[inode_index].mode = mode | S_IFDIR;
+    else if (S_ISREG(inodes[inode_index].mode))
+        inodes[inode_index].mode = mode | S_IFREG;
+
+    return disk_write_inode(inodes[inode_index], inode_index);
 }
 
 int fs_utime(const char *path, struct utimbuf *ut)
@@ -942,7 +958,7 @@ int path_translate(const char *path, struct path_trans *pt)
 }
 
 /* fill a stat struct with inode's information.
- * the caller is responsible for zero'ing sb.
+ * the caller is responsible for zero'ing the stat struct, sb.
  * we pay the overhead of calling a function instead of doing it in place.
  */
 void inode_to_stat(struct fs7600_inode * inode, uint32_t inode_index, struct stat * sb)
@@ -1036,3 +1052,23 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
     return SUCCESS;
 }
 
+/* write an inode onto the disk */
+int disk_write_inode(struct fs7600_inode inode, uint32_t inode_index)
+{
+        struct fs7600_inode inode_block[INODES_PER_BLK];
+
+        uint32_t block_number = inode_start + (inode_index / INODES_PER_BLK);
+        /* index of the inode within its block */
+        uint32_t iblock_index = inode_index % INODES_PER_BLK;
+
+        /* load the inode block */
+        disk->ops->read(disk, block_number, 1, inode_block);
+
+        /* change the contents of the inode */
+        inode_block[ iblock_index ] = inode;
+
+        /* write the block back to disk */
+        disk->ops->write(disk, block_number, 1, inode_block);
+
+        return SUCCESS;
+}
