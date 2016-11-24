@@ -24,6 +24,9 @@
 /* prototypes */
 int path_translate(const char *, struct path_trans *);
 void inode_to_stat(struct fs7600_inode *, uint32_t , struct stat *);
+int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32_t i,
+                           uint32_t j, uint32_t * idx_ary_second, bool fill_ary_second,
+                           void * data);
 
 extern int homework_part;       /* set by '-part n' command-line option */
 
@@ -382,9 +385,28 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
 {
     struct path_trans pt;
     struct fs7600_inode inode;
-    uint32_t i, block_number;
-    size_t real_len;
+    char data[1024];
+    uint32_t idx_ary_second[IDX_PER_BLK];
+    uint32_t i, j, k, i2, j2, nbytes = 0;
     off_t size;
+
+    case_level level;
+    size_t pos_start, pos_final;
+
+    /* These are indices in terms of absolute values,
+     * i.e. a single file can have (6 + 256 + 256^2) pointers to data blocks
+     * that are indexed starting by zero, i.e. 0..(6 + 1024 + 1024^2 - 1)
+     */
+    uint32_t abs_block_start_idx, abs_block_final_idx;
+
+    /* These are indices in terms of relative values.
+     * i.e. for direct and indir_1, first var ranges in 0..5 and 0..1023 respectively.
+     * For indir_2, first and second vars range in 0..1023.
+     */
+    struct block_idx block_start_idx, block_final_idx;
+    bool start_in_indir1, start_in_indir2;
+    bool stay_in_direct, stay_in_indir1;
+
     int ret;
 
     /* Do some error checking */
@@ -395,34 +417,365 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
         return -EOPNOTSUPP;
     }
 
-    if (offset >= size || len == 0)
-        return 0;
-
     ret = path_translate(path, &pt);
     if (ret < 0)
         return ret;
 
-    real_len = len;
-    size  = inode.size;
-    /* Same as: offset + len > size.
-     * Writing it in next form, we "cache" the (size - offset) calculation.
-     */
-    if (len > size - offset)
-        real_len = size - offset;
-
     inode = inodes[pt.inode_index];
+    size  = inode.size;
+    if (offset >= size || len == 0)
+        return 0;
 
     /* path must be a file */
     if (!S_ISREG(inode.mode))
         return -EISDIR;
 
-    /* based on the file size, we know that we have a valid offset and len.
-     * we locate the block that contains the offset and also its specific position
-     * in that block.
+    /* Same as: offset + len > size. Writing it in next form, we "cache" the (size - offset) calculation. */
+    if (len > size - offset)
+        len = size - offset;
+
+    /* Based on the file size, we know that we have a valid offset and len. */
+    /* These are the actual indexs of the first and last elements in the first and last data blocks */
+    pos_start = offset % FS_BLOCK_SIZE;
+    pos_final = (offset + len - 1) % FS_BLOCK_SIZE;
+
+    abs_block_start_idx = (uint32_t) (offset / FS_BLOCK_SIZE);
+    abs_block_final_idx = (uint32_t) ((offset + len - 1) / FS_BLOCK_SIZE);
+
+    /* the check is in term of absolute values, so we check in increasing order:
+     * N_DIRECT < (N_DIRECT + IDX_PER_BLK) < (N_DIRECT + IDX_PER_BLK ++)
      */
+    if (abs_block_start_idx < N_DIRECT)
+    {
+        /* based on the (absolute) offset we start from some direct block */
+        level = DIRECT;
+        start_in_indir1 = false;
+        start_in_indir2 = false;
+        block_start_idx.first  = abs_block_start_idx;
+        block_start_idx.second = 0; // not used in this case
+    }
+    else if (abs_block_start_idx < N_DIRECT + IDX_PER_BLK) // implied: && >= N_DIRECT
+    {
+        /* based on the (absolute) offset we start from some indir_1 block */
+        level = INDIR_1;
+        start_in_indir1 = true;
+        start_in_indir2 = false;
+        block_start_idx.first  = abs_block_start_idx - N_DIRECT;
+        block_start_idx.second = 0; // not used in this case
+    }
+    else
+    {
+        /* based on the (absolute) offset we start from some indir_2 block */
+        level = INDIR_2;
+        start_in_indir1 = false;
+        start_in_indir2 = true;
+        block_start_idx.first  = (uint32_t) ( (abs_block_start_idx - N_DIRECT - IDX_PER_BLK) / IDX_PER_BLK );
+        block_start_idx.second = (uint32_t) ( (abs_block_start_idx - N_DIRECT - IDX_PER_BLK) % IDX_PER_BLK );
+    }
+
+    /* same logic as above */
+    if (abs_block_final_idx < N_DIRECT)
+    {
+        /* based on the (absolute) (offset + len) we finish in some direct block */
+        stay_in_direct = true;
+        stay_in_indir1 = false;
+        block_final_idx.first  = abs_block_final_idx;
+        block_final_idx.second = 0; // not used in this case
+    }
+    else if (abs_block_final_idx < N_DIRECT + IDX_PER_BLK) // implied: && >= N_DIRECT
+    {
+        /* based on the (absolute) (offset + len) we finish in some indir_1 block */
+        stay_in_direct = false;
+        stay_in_indir1 = true;
+        block_final_idx.first  = abs_block_final_idx - N_DIRECT;
+        block_final_idx.second = 0; // not used in this case
+    }
+    else
+    {
+        /* based on the (absolute) (offset + len) we finish in some indir_2 block */
+        stay_in_direct = false;
+        stay_in_indir1 = false;
+        block_final_idx.first  = (uint32_t) ( (abs_block_final_idx - N_DIRECT - IDX_PER_BLK) / IDX_PER_BLK );
+        block_final_idx.second = (uint32_t) ( (abs_block_final_idx - N_DIRECT - IDX_PER_BLK) % IDX_PER_BLK );
+    }
+
+    /* We jump to the next case without a break if we need to read more block
+     * from the next level. I.e. we just from direct to indir_1 and from indir_1 to indir_2.
+     * We assume that a file is stored sequentially in the sense that we start to fill
+     * sequentially indir_1 after we have sequentially filled direct, and the same for indir_2.
+     *
+     */
+    switch(level)
+    {
+        case DIRECT:
+            i = block_start_idx.first;
+            if (stay_in_direct)
+                j = block_final_idx.first;
+            else
+                j = N_DIRECT;
+
+            ret = fetch_inode_data_block(&inode, DIRECT, i, 0, NULL, false, data);
+            if (ret < 0)
+                return ret;
+
+            /* there is the case where we start and end in the same block
+             * so just grab the data and exit the switch.
+             */
+            if (stay_in_direct && i == j) //i == j, should be enought
+            {
+                /* grab the data fom pos_start to pos_final */
+                memcpy(buf, &data[pos_start], pos_final - pos_start + 1);
+                nbytes = pos_final - pos_start + 1;
+                break;
+            }
+
+            /* (i != j) && (don't care about stay_in_direct), so we can put and else here.
+             * grab the data fom pos_start to the end of the block
+             */
+            memcpy(buf+nbytes, &data[pos_start], FS_BLOCK_SIZE - pos_start);
+            nbytes += FS_BLOCK_SIZE - pos_start;
+
+            /* we immediately move to the next block, i.e. ++i, after the memcpy above */
+            while (++i < j)
+            {
+                ret = fetch_inode_data_block(&inode, DIRECT, i, 0, NULL, false, data);
+                if (ret < 0)
+                    return ret;
+
+                memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
+                nbytes += FS_BLOCK_SIZE;
+            }
+
+            /* copy the last of our data and exit the switch */
+            if (stay_in_direct)
+            {
+                ret = fetch_inode_data_block(&inode, DIRECT, i, 0, NULL, false, data);
+                if (ret < 0)
+                    return ret;
+
+                /* grab the first pos_final data only */
+                memcpy(buf+nbytes, data, pos_final + 1);
+                nbytes += pos_final + 1;
+                break;
+            }
+
+        case INDIR_1:
+            /* set the start and final block indices */
+            if (start_in_indir1)
+            {
+                i = block_start_idx.first;
+            }
+            else
+            {
+                i = 0;
+                /* we have crossed here from case DIRECT, therefore pos_start
+                 * has been used and we can reset it here. This avoids puting the
+                 * block fetch and memcpy inside the if-else stmt.
+                 */
+                pos_start = 0;
+            }
+
+            if (stay_in_indir1)
+                j = block_final_idx.first;
+            else
+                j = IDX_PER_BLK;
+
+            ret = fetch_inode_data_block(&inode, INDIR_1, i, 0, NULL, false, data);
+            if (ret < 0)
+                return ret;
+
+            /* there is the case where we start and end in the same block
+             * so just grab the data and exit the switch.
+             */
+            if (i == j) //implies that stay_in_indir1 is also true, but that's not the criterion
+            {
+                /* grab the data fom pos_start to pos_final and exit the switch */
+                if (start_in_indir1)
+                {
+                    memcpy(buf+nbytes, &data[pos_start], pos_final - pos_start + 1);
+                    nbytes += pos_final - pos_start + 1;
+                }
+                else
+                {
+                    memcpy(buf+nbytes, data, pos_final + 1);
+                    nbytes += pos_final + 1;
+                }
+
+                break;
+            }
+
+            /* if we start_in_indir1 then nbytes = 0 as expected and needed
+             * else if we came from upstairs, i.e. case DIRECT, then we increase
+             * the pointer accordingly.
+             */
+            memcpy(buf+nbytes, &data[pos_start], FS_BLOCK_SIZE - pos_start);
+            nbytes += FS_BLOCK_SIZE - pos_start;
+
+            /* the rest of the logic is the same as in the DIRECT case. */
+
+            /* we immediately move to the next block, i.e. ++i, after the memcpy above */
+            while (++i < j)
+            {
+                ret = fetch_inode_data_block(&inode, INDIR_1, i, 0, NULL, false, data);
+                if (ret < 0)
+                    return ret;
+
+                memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
+                nbytes += FS_BLOCK_SIZE;
+            }
+
+            /* copy the last of our data and exit the switch */
+            if (stay_in_indir1)
+            {
+                ret = fetch_inode_data_block(&inode, INDIR_1, i, 0, NULL, false, data);
+                if (ret < 0)
+                    return ret;
+
+                /* grab the first pos_final data only */
+                memcpy(buf+nbytes, data, pos_final + 1);
+                nbytes += pos_final + 1;
+
+                break;
+            }
+
+        case INDIR_2:
+            /* set the start and final block indices */
+            if (start_in_indir2)
+            {
+                i = block_start_idx.first;
+                j = block_start_idx.second;
+            }
+            else
+            {
+                i = 0;
+                j = 0;
+                /* we have crossed from case INDIR_1, therefore pos_start
+                 * has been used and we can reset it here. This avoids puting the
+                 * block fetch and memcpy inside the if-else stmt.
+                 */
+                pos_start = 0;
+            }
+
+            i2 = block_final_idx.first;
+            j2 = block_final_idx.second;
+            ret = fetch_inode_data_block(&inode, INDIR_2, i, j, idx_ary_second, true, data);
+            if (ret < 0)
+                return ret;
 
 
-    return -EOPNOTSUPP;
+            /* there is the case where we start and end in the same row.
+             * so just grab the data of the respected columns and exit the switch.
+             */
+            if (i == i2)
+            {
+                /* this if-else stmt uses the same row, so we don't need to look
+                 * into another indir_2 row
+                 */
+                if (j == j2)    //same row and column
+                {
+                    if (start_in_indir2)
+                    {
+                        memcpy(buf+nbytes, &data[pos_start], pos_final - pos_start + 1);
+                        nbytes += pos_final - pos_start + 1;
+                    }
+                    else
+                    {
+                        memcpy(buf+nbytes, data, pos_final + 1);
+                        nbytes += pos_final + 1;
+                    }
+                }
+                else    // grab the data from the next rows, i.e. more that one
+                {
+                    /* Copy the last columns of the last row.
+                     * Must go until j2-1 in order to pull the last data with j2 and pos_final
+                     */
+                    for (k = j; k < j2; k++)
+                    {
+                        ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
+                        if (ret < 0)
+                            return ret;
+
+                        memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
+                        nbytes += FS_BLOCK_SIZE;
+                    } //for
+
+                    ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
+                    if (ret < 0)
+                        return ret;
+
+                    memcpy(buf+nbytes, data, pos_final + 1);
+                    nbytes += pos_final + 1;
+                }
+
+                break;
+            } // if (i == i2)
+
+            /* its  the case that i < i2 so we read the remaining parts of that row */
+            memcpy(buf+nbytes, &data[pos_start], FS_BLOCK_SIZE - pos_start);
+            nbytes += FS_BLOCK_SIZE - pos_start;
+
+            for (k = j+1; k < IDX_PER_BLK; k++)
+            {
+                ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
+                if (ret < 0)
+                    return ret;
+
+                memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
+                nbytes += FS_BLOCK_SIZE;
+            }//for k
+
+
+            while (++i < i2)
+            {
+                /* Load next row, from column 0 and fill idx_ary_second
+                 * We fill idx_ary_second when changing i in INDIR_2.
+                 */
+                ret = fetch_inode_data_block(&inode, INDIR_2, i, 0, idx_ary_second, true, data);
+                if (ret < 0)
+                    return ret;
+
+                for (k = 0; k < IDX_PER_BLK; k++)
+                {
+                    /* load the columns using our cached idx_ary_second */
+                    ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
+                    if (ret < 0)
+                        return ret;
+
+                    memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
+                    nbytes += FS_BLOCK_SIZE;
+                }//for
+            } //while
+
+            /* load the last row, from column 0 and fill idx_ary_second */
+            ret = fetch_inode_data_block(&inode, INDIR_2, i, 0, idx_ary_second, true, data);
+            if (ret < 0)
+                return ret;
+
+            /* Copy the last columns of the last row.
+             * Must go until j2-1 in order to pull the last data with j2 and pos_final
+             */
+            for (k = 0; k < j2; k++)
+            {
+                ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
+                if (ret < 0)
+                    return ret;
+
+                memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
+                nbytes += FS_BLOCK_SIZE;
+            }//for
+
+            /* load the last column */
+            ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
+            if (ret < 0)
+                return ret;
+
+            memcpy(buf+nbytes, data, pos_final + 1);
+            nbytes += pos_final + 1;
+
+            break; //for fun
+    }//switch
+
+    return nbytes;
 }
 
 /* write - write data to a file
@@ -590,6 +943,7 @@ int path_translate(const char *path, struct path_trans *pt)
 
 /* fill a stat struct with inode's information.
  * the caller is responsible for zero'ing sb.
+ * we pay the overhead of calling a function instead of doing it in place.
  */
 void inode_to_stat(struct fs7600_inode * inode, uint32_t inode_index, struct stat * sb)
 {
@@ -610,3 +964,75 @@ void inode_to_stat(struct fs7600_inode * inode, uint32_t inode_index, struct sta
 
     return;
 }
+
+/* depending on the level, we fetch the corresponding data block.
+ * we pay the overhead of calling a function with a lot of args
+ */
+int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32_t i,
+                           uint32_t j, uint32_t * idx_ary_second, bool fill_ary_second,
+                           void * data)
+{
+    uint32_t block_number;
+    uint32_t idx_ary_first[IDX_PER_BLK];
+
+    switch(level)
+    {
+        case DIRECT:
+            block_number = inode->direct[i];
+            if (FD_ISSET(block_number - data_start, data_map))
+                disk->ops->read(disk, block_number, 1, data);
+            else
+                return -ENOENT;
+
+            break;
+
+        case INDIR_1:
+            /* is indir_1 valid? */
+            if (FD_ISSET(inode->indir_1 - data_start, data_map))
+                disk->ops->read(disk, inode->indir_1, 1, idx_ary_first);
+            else
+                return -ENOENT;
+
+            /* only fetch data if valid */
+            block_number = idx_ary_first[i];
+            if (FD_ISSET(block_number - data_start, data_map))
+                disk->ops->read(disk, block_number, 1, data);
+            else
+                return -ENOENT;
+
+            break;
+
+        case INDIR_2:
+            if (fill_ary_second)
+            {
+                /* is indir_2 valid? (1st level of indices) */
+                if (FD_ISSET(inode->indir_2 - data_start, data_map))
+                    disk->ops->read(disk, inode->indir_2, 1, idx_ary_first);
+                else
+                    return -ENOENT;
+
+            /* We can fill the columns array in the first call and use it for subsequent calls.
+             * That is the purpose of this boolean variable.
+             */
+
+                /* is indir_2[i] valid? (2nd level of indices) */
+                block_number = idx_ary_first[i];
+                if (FD_ISSET(block_number - data_start, data_map))
+                    disk->ops->read(disk, block_number, 1, idx_ary_second);
+                else
+                    return -ENOENT;
+            }
+
+            /* only fetch data if valid */
+            block_number = idx_ary_second[j];
+            if (FD_ISSET(block_number - data_start, data_map))
+                disk->ops->read(disk, block_number, 1, data);
+            else
+                return -ENOENT;
+
+            break; //for fun
+    }
+
+    return SUCCESS;
+}
+
