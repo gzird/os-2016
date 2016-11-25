@@ -82,6 +82,7 @@ struct fs7600_inode *inodes;
 /* starting points in block numbers */
 const uint32_t inode_map_start = 1;
 uint32_t data_map_start, inode_start, data_start;
+uint32_t num_inodes;
 
 
 /* init - this is called once by the FUSE framework at startup. Ignore
@@ -143,6 +144,8 @@ void* fs_init(struct fuse_conn_info *conn)
        fprintf(stderr, "failed to read inodes from disk.\n");
         exit(1);
     }
+
+    num_inodes = sb.inode_region_sz * INODES_PER_BLK;
 
     if (homework_part > 3)
         disk = cache_create(disk);
@@ -294,7 +297,61 @@ static int fs_releasedir(const char *path, struct fuse_file_info *fi)
  */
 static int fs_mknod(const char *path, mode_t mode, dev_t dev)
 {
-    return -EOPNOTSUPP;
+    struct path_trans pt;
+    struct fs7600_inode inode;
+    uint32_t i;
+    bool found = false;
+    int ret;
+
+    /* Does the file already exist? */
+    ret = path_translate(path, &pt);
+    if (ret == SUCCESS)
+        return -EEXIST;
+    else if (ret != -ENOENT) // something unexpected happened
+        return ret;
+
+    /* Set the mode for a non-file? */
+    if (!S_ISREG(mode))
+        return -EINVAL;
+
+//     /* find the next availabe inode
+//      * this is not the correct code.
+//      */
+//    for (i = 0; i < num_inodes; i++)
+//    {
+//        if (!FD_ISSET(i, inode_map))
+//        {
+//             found = true;
+//             FD_SET(i, inode_map);
+//
+//             break;
+//        }
+//     }
+//
+//     printf("=====================> found: %d, i: %u, num_inodes: %u, red: %d\n", found, i, num_inodes, ret);
+//
+//     if (!found)
+//         return -ENOSPC;
+
+    inode.uid   = getuid();
+    inode.gid   = getgid();
+    inode.mode  = (mode & 01777) | S_IFREG;
+    inode.ctime = time(NULL);
+    inode.mtime = inode.ctime;      /* don't call time(NULL) again */
+    inode.size  = 0;
+    for (int j = 0; j < N_DIRECT; j++)
+        inode.direct[j] = 0;
+
+    inode.indir_1 = 0;
+    inode.indir_2 = 0;
+
+    /* update the memory */
+    inodes[i] = inode;
+
+    /* sync the disk with memory */
+    disk_write_inode(inodes[i], i);
+
+    return SUCCESS;
 }
 
 /* mkdir - create a directory with the given mode.
