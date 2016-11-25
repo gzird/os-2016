@@ -2,7 +2,7 @@
 # file:        Makefile - programming assignment 3
 #
 
-CFLAGS = -D_FILE_OFFSET_BITS=64 -g
+CFLAGS = -D_FILE_OFFSET_BITS=64 -g -Wall
 ifdef COVERAGE
 CFLAGS += -fprofile-arcs -ftest-coverage
 LD_LIBS = --coverage
