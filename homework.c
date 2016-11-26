@@ -962,6 +962,13 @@ int path_translate(const char *path, struct path_trans *pt)
         return -EOPNOTSUPP;
     }
 
+    /* if path is the rootdir then return its inode num */
+    if (strcmp(path, delimiter) == 0)
+    {
+        pt->inode_index = 1;
+        return SUCCESS;
+    }
+
     /* break the string into componets
      * strdup is safe for the purposes of this assignment
      */
@@ -969,19 +976,12 @@ int path_translate(const char *path, struct path_trans *pt)
     if (!pathc)
         return -ENOMEM;
 
-    /* path is the rootdir, hence return it */
-    if (strcmp(pathc, delimiter) == 0)
-    {
-        pt->inode_index = 1;
-        return 0;
-    }
-
     /* allocate memory for one data block */
     struct fs7600_dirent * dblock = (struct fs7600_dirent *) malloc (FS_BLOCK_SIZE);
     if (!dblock)
         return -ENOMEM;
 
-    /* point to the rootdir to start the search */
+    /* point to the rootdir and start the search recursively */
     inode_index = 1;
     token = strtok(pathc, delimiter);
     while (token)
@@ -990,11 +990,11 @@ int path_translate(const char *path, struct path_trans *pt)
         if (!S_ISDIR(inodes[inode_index].mode))
             return -ENOENT;
 
-        /* fetch the data block from the disk.
-         * data bitmap block is checked relative actual block number.
-         * we should re-fetch the block even if it is the same 
+        /* Fetch the data block from the disk.
+         * The data bitmap block is checked relative actual block number.
+         * We should re-fetch the block even if it is the same
          * in case some other process invalided it.
-         * TODO: Is the above logic ok? Because if the block is the same, we could save a block fetch.
+         * TODO: Is the above logic ok? Because if the block is the same, we can save a block fetch.
          */
         block_number = inodes[inode_index].direct[0];
         if (FD_ISSET(block_number - data_start, data_map))
