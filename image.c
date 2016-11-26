@@ -44,8 +44,10 @@ static int image_read(struct blkdev *dev, int offset, int len, void *buf)
     if (im->fd == -1)
         return E_UNAVAIL;
 
-    if (offset < 0 || offset+len > im->nblks)
+    if (offset < 0 || offset+len > im->nblks) {
+        fprintf(stderr, "disk->ops.read: BAD ADDRESS: %d (len %d)\n", offset, len);
         return E_BADADDR;
+    }
 
     fprintf(log_fp, "read %d %d\n", offset, len);
     int result = pread(im->fd, buf, len*BLOCK_SIZE, offset*BLOCK_SIZE);
@@ -78,8 +80,10 @@ static int image_write(struct blkdev * dev, int offset, int len, void *buf)
     if (im->fd == -1)
         return E_UNAVAIL;
 
-    if (offset < 0 || offset+len > im->nblks)
+    if (offset < 0 || offset+len > im->nblks) {
+        fprintf(stderr, "disk->ops.write: BAD ADDRESS: %d (len %d)\n", offset, len);
         return E_BADADDR;
+    }
     
     fprintf(log_fp, "write %d %d\n", offset, len);
     int result = pwrite(im->fd, buf, len*BLOCK_SIZE, offset*BLOCK_SIZE);
