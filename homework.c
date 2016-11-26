@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdint.h>
+#include <libgen.h>
 
 #include "fs7600.h"
 #include "blkdev.h"
@@ -28,10 +29,12 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
                            uint32_t j, uint32_t * idx_ary_second, bool fill_ary_second,
                            void * data);
 int disk_write_inode(struct fs7600_inode, uint32_t);
+int mknod_mkdir_helper(const char *, mode_t, bool);
+
 
 extern int homework_part;       /* set by '-part n' command-line option */
 
-/* 
+/*
  * disk access - the global variable 'disk' points to a blkdev
  * structure which has been initialized to access the image file.
  *
@@ -43,7 +46,7 @@ extern struct blkdev *disk;
  * cache - you'll need to create a blkdev which "wraps" this one
  * and performs LRU caching with write-back.
  */
-int cache_nops(struct blkdev *dev) 
+int cache_nops(struct blkdev *dev)
 {
     struct blkdev *d = dev->private;
     return d->ops->num_blocks(d);
@@ -70,7 +73,7 @@ struct blkdev *cache_create(struct blkdev *d)
 }
 
 /* by defining bitmaps as 'fd_set' pointers, you can use existing
- * macros to handle them. 
+ * macros to handle them.
  *   FD_ISSET(##, inode_map);
  *   FD_CLR(##, block_map);
  *   FD_SET(##, block_map);
@@ -82,7 +85,7 @@ struct fs7600_inode *inodes;
 /* starting points in block numbers */
 const uint32_t inode_map_start = 1;
 uint32_t data_map_start, inode_start, data_start;
-uint32_t num_inodes;
+uint32_t num_inodes, num_dblocks;
 
 
 /* init - this is called once by the FUSE framework at startup. Ignore
@@ -145,7 +148,8 @@ void* fs_init(struct fuse_conn_info *conn)
         exit(1);
     }
 
-    num_inodes = sb.inode_region_sz * INODES_PER_BLK;
+    num_inodes  = sb.inode_region_sz * INODES_PER_BLK;
+    num_dblocks = sb.num_blocks - data_start;
 
     if (homework_part > 3)
         disk = cache_create(disk);
@@ -246,10 +250,13 @@ static int fs_readdir(const char *path, void *ptr, fuse_fill_dir_t filler,
 
     /* fetch the inode's first data block and iterate in its contents */
     block_number = inodes[inode_index].direct[0];
-    if (FD_ISSET(block_number - data_start, data_map))
+    if (block_number && FD_ISSET(block_number - data_start, data_map))
         disk->ops->read(disk, block_number, 1, dblock);
     else
+    {
+        free(dblock);
         return -ENOENT;
+    }
 
     for (i = 0; i < DIRENT_PER_BLK; i++)
     {
@@ -271,7 +278,7 @@ static int fs_readdir(const char *path, void *ptr, fuse_fill_dir_t filler,
     return SUCCESS;
 }
 
-/* see description of Part 2. In particular, you can save information 
+/* see description of Part 2. In particular, you can save information
  * in fi->fh. If you allocate memory, free it in fs_releasedir.
  */
 static int fs_opendir(const char *path, struct fuse_file_info *fi)
@@ -297,74 +304,24 @@ static int fs_releasedir(const char *path, struct fuse_file_info *fi)
  */
 static int fs_mknod(const char *path, mode_t mode, dev_t dev)
 {
-    struct path_trans pt;
-    struct fs7600_inode inode;
-    uint32_t i;
-    bool found = false;
-    int ret;
+    bool isDir = false;     /* make clear what's the last argument */
 
-    /* Does the file already exist? */
-    ret = path_translate(path, &pt);
-    if (ret == SUCCESS)
-        return -EEXIST;
-    else if (ret != -ENOENT) // something unexpected happened
-        return ret;
-
-    /* Set the mode for a non-file? */
-    if (!S_ISREG(mode))
-        return -EINVAL;
-
-//     /* find the next availabe inode
-//      * this is not the correct code.
-//      */
-//    for (i = 0; i < num_inodes; i++)
-//    {
-//        if (!FD_ISSET(i, inode_map))
-//        {
-//             found = true;
-//             FD_SET(i, inode_map);
-//
-//             break;
-//        }
-//     }
-//
-//     printf("=====================> found: %d, i: %u, num_inodes: %u, red: %d\n", found, i, num_inodes, ret);
-//
-//     if (!found)
-//         return -ENOSPC;
-
-    inode.uid   = getuid();
-    inode.gid   = getgid();
-    inode.mode  = (mode & 01777) | S_IFREG;
-    inode.ctime = time(NULL);
-    inode.mtime = inode.ctime;      /* don't call time(NULL) again */
-    inode.size  = 0;
-    for (int j = 0; j < N_DIRECT; j++)
-        inode.direct[j] = 0;
-
-    inode.indir_1 = 0;
-    inode.indir_2 = 0;
-
-    /* update the memory */
-    inodes[i] = inode;
-
-    /* sync the disk with memory */
-    disk_write_inode(inodes[i], i);
-
-    return SUCCESS;
+    return mknod_mkdir_helper(path, mode, isDir);
 }
 
 /* mkdir - create a directory with the given mode.
  * Errors - path resolution, EEXIST
- * Conditions for EEXIST are the same as for create. 
+ * Conditions for EEXIST are the same as for create.
  * If this would result in >32 entries in a directory, return -ENOSPC
  *
  * Note that you may want to combine the logic of fs_mknod and
- * fs_mkdir. 
- */ 
+ * fs_mkdir.
+ */
 static int fs_mkdir(const char *path, mode_t mode)
 {
-    return -EOPNOTSUPP;
+    bool isDir = true;     /* make clear what's the last argument */
+
+    return mknod_mkdir_helper(path, mode, isDir);
 }
 
 /* truncate - truncate file to exactly 'len' bytes
@@ -870,7 +827,7 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
  * error.
  * Errors - path resolution, ENOENT, EISDIR
  *  return EINVAL if 'offset' is greater than current file length.
- *  (POSIX semantics support the creation of files with "holes" in them, 
+ *  (POSIX semantics support the creation of files with "holes" in them,
  *   but we don't)
  */
 static int fs_write(const char *path, const char *buf, size_t len,
@@ -891,7 +848,7 @@ static int fs_release(const char *path, struct fuse_file_info *fi)
 
 /* statfs - get file system statistics
  * see 'man 2 statfs' for description of 'struct statvfs'.
- * Errors - none. 
+ * Errors - none.
  */
 static int fs_statfs(const char *path, struct statvfs *st)
 {
@@ -997,10 +954,14 @@ int path_translate(const char *path, struct path_trans *pt)
          * TODO: Is the above logic ok? Because if the block is the same, we can save a block fetch.
          */
         block_number = inodes[inode_index].direct[0];
-        if (FD_ISSET(block_number - data_start, data_map))
+        if (block_number && FD_ISSET(block_number - data_start, data_map))
             disk->ops->read(disk, block_number, 1, dblock);
         else
+        {
+            free(pathc);
+            free(dblock);
             return -ENOENT;
+        }
 
         /* try to find the entry's inode number for each component of the path */
         found = false;
@@ -1019,7 +980,11 @@ int path_translate(const char *path, struct path_trans *pt)
     }
 
     if (!found)
+    {
+        free(pathc);
+        free(dblock);
         return -ENOENT;
+    }
 
     pt->inode_index = inode_index;
     free(pathc);
@@ -1143,3 +1108,158 @@ int disk_write_inode(struct fs7600_inode inode, uint32_t inode_index)
 
         return SUCCESS;
 }
+
+/* based on isDir we essentially run either mknod or mkfile */
+int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
+{
+    struct fs7600_inode inode;
+    struct path_trans pt;
+    char *pathc, *bname, *parent;
+    uint32_t i, idx_free, parent_len, block_number, inode_index, entry_count = 0;
+    bool found, new_block;
+    int ret;
+
+    pathc = strdup(path);
+    if (!pathc)
+        return -ENOMEM;
+
+    /* get the basename of the file/dir */
+    bname = basename(pathc);
+    if (strlen(bname) > 27)
+    {
+        fprintf(stderr, "Maximum file or directory name is 27 characters\n");
+        return -EINVAL;
+    }
+
+    parent_len = strlen(pathc) - strlen(bname);
+    parent = (char *) calloc(parent_len + 1,  sizeof(char));
+
+    /* check if the parent directory exists */
+    strncpy(parent, pathc, parent_len);
+    ret = path_translate(parent, &pt);
+    if (ret < 0)
+        return ret;
+
+    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (sizeof(struct fs7600_dirent), DIRENT_PER_BLK);
+    if (!dblock)
+        return -ENOMEM;
+
+    block_number = inodes[pt.inode_index].direct[0];
+
+    /* if directory is empty, find the next available data block and assign it
+     * else fetch the directory's entry block
+     */
+    found = false;
+    if (block_number == 0 || !FD_ISSET(block_number - data_start, data_map))
+    {
+        for (i = 0; i < num_dblocks; i++)
+            if (!FD_ISSET(i, data_map))
+            {
+                block_number = i;
+                found        = true;
+                new_block    = true;
+                idx_free     = 0;
+                inodes[pt.inode_index].direct[0] = block_number;
+                FD_SET(i, data_map);
+                break;
+            }
+    }
+    else
+    {
+        disk->ops->read(disk, block_number, 1, dblock);
+        found     = true;       /* becomes true if read succeeds */
+        new_block = false;
+    }
+
+    /* there is no available data block */
+    if (!found)
+        return -ENOSPC;
+
+    if (!new_block)
+    {
+        /* search the directory entries for free space or the same file/dir */
+        found = false;
+        for (i = 0; i < DIRENT_PER_BLK; i++)
+        {
+            if (dblock[i].valid)
+            {
+                /* count the valid entries */
+                entry_count++;
+                /* maybe the file/dir already exists */
+                if (strcmp(bname, dblock[i].name) == 0)
+                {
+                    found = true;
+                    break;
+                }
+            }
+            else
+            {
+                idx_free = i;   /* keep track of the furthest free (invalid) direntry */
+            }
+        }
+
+        /* same name exists? */
+        if (found)
+            return -EEXIST;
+
+        /* is direntry full? */
+        if (entry_count == DIRENT_PER_BLK)
+            return -ENOSPC;
+    } //if !new_block
+
+    /* find the next availabe inode */
+    found = false;
+    for (i = 0; i < num_inodes; i++)
+    {
+        if (!FD_ISSET(i, inode_map))
+        {
+             found       = true;
+             inode_index = i;
+             FD_SET(i, inode_map);
+             break;
+        }
+     }
+
+     if (!found)
+         return -ENOSPC;
+
+    /* set the parent's directory entry */
+    dblock[idx_free].valid = 1;
+    dblock[idx_free].isDir = isDir;
+    dblock[idx_free].inode = inode_index;
+    strcpy(dblock[idx_free].name, bname);
+
+    /* write the updated direntry block back to disk */
+    disk->ops->write(disk, block_number, 1, dblock);
+
+    /* Do we have the right type of mode? */
+    if ( (isDir && S_ISREG(mode)) || (!isDir && S_ISDIR(mode)) )
+        return -EINVAL;
+
+    inode.uid   = getuid();
+    inode.gid   = getgid();
+    if (isDir)
+        inode.mode  = (mode & 01777) | S_IFDIR;
+    else
+        inode.mode  = (mode & 01777) | S_IFREG;
+
+    inode.ctime = time(NULL);
+    inode.mtime = inode.ctime;      /* don't call time(NULL) again */
+    inode.size  = 0;
+
+    /* don't use any space for empty dir or empty file */
+    for (int j = 0; j < N_DIRECT; j++)
+        inode.direct[j] = 0;
+
+    inode.indir_1 = 0;
+    inode.indir_2 = 0;
+
+    /* update the memory */
+    inodes[inode_index] = inode;
+
+    /* sync the disk with memory */
+    disk_write_inode(inodes[inode_index], inode_index);
+
+    return SUCCESS;
+}
+
