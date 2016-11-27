@@ -993,7 +993,13 @@ static int fs_write(const char *path, const char *buf, size_t len,
     switch(level)
     {
         case DIRECT:
-    }
+            i = block_start_idx.first;
+            if (stay_in_direct)
+                j = block_final_idx.first;
+            else
+                j = N_DIRECT;
+
+    } //switch
 
 
 
