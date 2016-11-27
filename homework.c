@@ -444,7 +444,7 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
 
     /* These are indices in terms of absolute values,
      * i.e. a single file can have (6 + 256 + 256^2) pointers to data blocks
-     * that are indexed starting by zero, i.e. 0..(6 + 1024 + 1024^2 - 1)
+     * and the data is indexed starting by zero, i.e. 0..(6 + 1024 + 1024^2 - 1)
      */
     uint32_t abs_block_start_idx, abs_block_final_idx;
 
@@ -840,17 +840,35 @@ static int fs_write(const char *path, const char *buf, size_t len,
 {
     struct path_trans pt;
     struct fs7600_inode inode;
+    uint32_t i, j, k, i2, j2, nbytes = 0;
     size_t size;
-    int ret;
+    int ret, ret2;
 
     ret = path_translate(path, &pt);
     if (ret < 0)
-        return ret;
+    {
+        /* if file does not exist create it, otherwise something else wen't wrong */
+        if (ret == -ENOENT)
+        {
+            mode_t mode = 01644 | S_IFREG;
+            ret2 = mknod(path, mode, 0);
+            if (ret2 < 0)
+                return ret2;
+            else
+                path_translate(path, &pt);  /* get the inode_index of the newly created file */
+        }
+        else
+        {
+            return ret;
+        }
+    }
+
+    inode = inodes[pt.inode_index];
+    size  = inode.size;
 
     /* Write only to files. We only deal with files and dirs, that why
      * a check !S_ISREG is accompanied by a return value of -EISDIR.
      */
-    inode = inodes[pt.inode_index];
     if (!S_ISREG(inode.mode))
         return -EISDIR;
 
@@ -868,6 +886,8 @@ static int fs_write(const char *path, const char *buf, size_t len,
     {
         return -EINVAL;
     }
+
+    /* Beyond this line, offset and len are validated */
 
     return -EOPNOTSUPP;
 }
