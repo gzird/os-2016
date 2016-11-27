@@ -86,6 +86,7 @@ struct fs7600_inode *inodes;
 const uint32_t inode_map_start = 1;
 uint32_t data_map_start, inode_start, data_start;
 uint32_t num_inodes, num_dblocks;
+uint32_t max_filesize;
 
 
 /* init - this is called once by the FUSE framework at startup. Ignore
@@ -148,8 +149,12 @@ void* fs_init(struct fuse_conn_info *conn)
         exit(1);
     }
 
-    num_inodes  = sb.inode_region_sz * INODES_PER_BLK;
-    num_dblocks = sb.num_blocks - data_start;
+    num_dblocks   = sb.num_blocks - data_start;
+    num_inodes    = sb.inode_region_sz * INODES_PER_BLK;
+    max_filesize  = ( N_DIRECT
+                      + (FS_BLOCK_SIZE)/sizeof(uint32_t)
+                      + (FS_BLOCK_SIZE*FS_BLOCK_SIZE)/(sizeof(uint32_t)*sizeof(uint32_t))
+                    ) * FS_BLOCK_SIZE;
 
     if (homework_part > 3)
         disk = cache_create(disk);
@@ -833,6 +838,37 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
 static int fs_write(const char *path, const char *buf, size_t len,
 		     off_t offset, struct fuse_file_info *fi)
 {
+    struct path_trans pt;
+    struct fs7600_inode inode;
+    size_t size;
+    int ret;
+
+    ret = path_translate(path, &pt);
+    if (ret < 0)
+        return ret;
+
+    /* Write only to files. We only deal with files and dirs, that why
+     * a check !S_ISREG is accompanied by a return value of -EISDIR.
+     */
+    inode = inodes[pt.inode_index];
+    if (!S_ISREG(inode.mode))
+        return -EISDIR;
+
+    if (offset + len > max_filesize)
+    {
+        fprintf(stderr, "The maximum supported filesize is %lu\n", (unsigned long) max_filesize);
+        return -EOPNOTSUPP;
+    }
+
+    /* file data are within 0..size-1. offset can take value(s):
+     * i)  0..size-1 to support overwrite
+     * ii) size to support append
+     */
+    if (offset > inode.size)
+    {
+        return -EINVAL;
+    }
+
     return -EOPNOTSUPP;
 }
 
