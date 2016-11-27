@@ -491,7 +491,7 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
     abs_block_start_idx = (uint32_t) (offset / FS_BLOCK_SIZE);
     abs_block_final_idx = (uint32_t) ((offset + len - 1) / FS_BLOCK_SIZE);
 
-    /* the check is in term of absolute values, so we check in increasing order:
+    /* The check is performed in terms of absolute values and in increasing order:
      * N_DIRECT < (N_DIRECT + IDX_PER_BLK) < (N_DIRECT + IDX_PER_BLK ++)
      */
     if (abs_block_start_idx < N_DIRECT)
@@ -548,14 +548,14 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
         block_final_idx.second = (uint32_t) ( (abs_block_final_idx - N_DIRECT - IDX_PER_BLK) % IDX_PER_BLK );
     }
 
-    /* We jump to the next case without a break if we need to read more block
-     * from the next level. I.e. we just from direct to indir_1 and from indir_1 to indir_2.
-     * We assume that a file is stored sequentially in the sense that we start to fill
-     * sequentially indir_1 after we have sequentially filled direct, and the same for indir_2.
-     *
-     */
-    switch(level)
-    {
+        /* We jump to the next case without a break if we need to read more block
+        * from the next level. I.e. we just from direct to indir_1 and from indir_1 to indir_2.
+        * We assume that a file is stored sequentially in the sense that we start to fill
+        * sequentially indir_1 after we have sequentially filled direct, and the same for indir_2.
+        *
+        */
+        switch(level)
+        {
         case DIRECT:
             i = block_start_idx.first;
             if (stay_in_direct)
@@ -841,8 +841,26 @@ static int fs_write(const char *path, const char *buf, size_t len,
     struct path_trans pt;
     struct fs7600_inode inode;
     uint32_t i, j, k, i2, j2, nbytes = 0;
-    size_t size;
+
+    size_t size, pos_start, pos_final;
+    case_level level;
+
     int ret, ret2;
+
+    /* These are indices in terms of absolute values,
+    * i.e. a single file can have (6 + 256 + 256^2) pointers to data blocks
+    * and the data is indexed starting by zero, i.e. 0..(6 + 1024 + 1024^2 - 1)
+    */
+    uint32_t abs_block_start_idx, abs_block_final_idx;
+
+    /* These are indices in terms of relative values.
+     * i.e. for direct and indir_1, first var ranges in 0..5 and 0..1023 respectively.
+     * For indir_2, first and second vars range in 0..1023.
+     */
+    struct block_idx block_start_idx, block_final_idx;
+    bool start_in_indir1, start_in_indir2;
+    bool stay_in_direct, stay_in_indir1;
+    bool append_block = false;
 
     ret = path_translate(path, &pt);
     if (ret < 0)
@@ -882,12 +900,104 @@ static int fs_write(const char *path, const char *buf, size_t len,
      * i)  0..size-1 to support overwrite
      * ii) size to support append
      */
-    if (offset > inode.size)
+    if (offset > size)
     {
         return -EINVAL;
     }
 
-    /* Beyond this line, offset and len are validated */
+    /* Beyond this line, offset and len are validated
+     * The logic is very similar to fs_read. Instead of fetching blocks to read,
+     * we are looking for free blocks to write.
+     */
+
+    /* Based on the file size, we know that we have a valid offset and len. */
+    /* These are the actual indexs of the first and last elements in the first and last data blocks */
+    pos_start = offset % FS_BLOCK_SIZE;
+    pos_final = (offset + len - 1) % FS_BLOCK_SIZE;
+
+    /* we are in append mode, and our starting position in a new block
+     * that we should allocate,
+     */
+    if (pos_start == 0 && offset == size)
+    {
+        append_block = true;
+    }
+
+    abs_block_start_idx = (uint32_t) (offset / FS_BLOCK_SIZE);
+    abs_block_final_idx = (uint32_t) ((offset + len - 1) / FS_BLOCK_SIZE);
+
+    /* The check is performed in terms of absolute values and in increasing order:
+     * N_DIRECT < (N_DIRECT + IDX_PER_BLK) < (N_DIRECT + IDX_PER_BLK ++)
+     */
+    if (abs_block_start_idx < N_DIRECT)
+    {
+        /* based on the (absolute) offset we start from some direct block */
+        level = DIRECT;
+        start_in_indir1 = false;
+        start_in_indir2 = false;
+        block_start_idx.first  = abs_block_start_idx;
+        block_start_idx.second = 0; // not used in this case
+    }
+    else if (abs_block_start_idx < N_DIRECT + IDX_PER_BLK) // implied: && >= N_DIRECT
+    {
+        /* based on the (absolute) offset we start from some indir_1 block */
+        level = INDIR_1;
+        start_in_indir1 = true;
+        start_in_indir2 = false;
+        block_start_idx.first  = abs_block_start_idx - N_DIRECT;
+        block_start_idx.second = 0; // not used in this case
+    }
+    else
+    {
+        /* based on the (absolute) offset we start from some indir_2 block */
+        level = INDIR_2;
+        start_in_indir1 = false;
+        start_in_indir2 = true;
+        block_start_idx.first  = (uint32_t) ( (abs_block_start_idx - N_DIRECT - IDX_PER_BLK) / IDX_PER_BLK );
+        block_start_idx.second = (uint32_t) ( (abs_block_start_idx - N_DIRECT - IDX_PER_BLK) % IDX_PER_BLK );
+    }
+
+    /* same logic as above */
+    if (abs_block_final_idx < N_DIRECT)
+    {
+        /* based on the (absolute) (offset + len) we finish in some direct block */
+        stay_in_direct = true;
+        stay_in_indir1 = false;
+        block_final_idx.first  = abs_block_final_idx;
+        block_final_idx.second = 0; // not used in this case
+    }
+    else if (abs_block_final_idx < N_DIRECT + IDX_PER_BLK) // implied: && >= N_DIRECT
+    {
+        /* based on the (absolute) (offset + len) we finish in some indir_1 block */
+        stay_in_direct = false;
+        stay_in_indir1 = true;
+        block_final_idx.first  = abs_block_final_idx - N_DIRECT;
+        block_final_idx.second = 0; // not used in this case
+    }
+    else
+    {
+        /* based on the (absolute) (offset + len) we finish in some indir_2 block */
+        stay_in_direct = false;
+        stay_in_indir1 = false;
+        block_final_idx.first  = (uint32_t) ( (abs_block_final_idx - N_DIRECT - IDX_PER_BLK) / IDX_PER_BLK );
+        block_final_idx.second = (uint32_t) ( (abs_block_final_idx - N_DIRECT - IDX_PER_BLK) % IDX_PER_BLK );
+    }
+
+
+    /* We jump to the next case without a break if we need to read more block
+    * from the next level. I.e. we just from direct to indir_1 and from indir_1 to indir_2.
+    * We assume that a file is stored sequentially in the sense that we start to fill
+    * sequentially indir_1 after we have sequentially filled direct, and the same for indir_2.
+    *
+    */
+    switch(level)
+    {
+    }
+
+
+
+
+
 
     return -EOPNOTSUPP;
 }
