@@ -548,98 +548,181 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
         block_final_idx.second = (uint32_t) ( (abs_block_final_idx - N_DIRECT - IDX_PER_BLK) % IDX_PER_BLK );
     }
 
-        /* We jump to the next case without a break if we need to read more block
-        * from the next level. I.e. we just from direct to indir_1 and from indir_1 to indir_2.
-        * We assume that a file is stored sequentially in the sense that we start to fill
-        * sequentially indir_1 after we have sequentially filled direct, and the same for indir_2.
-        *
-        */
-        switch(level)
-        {
-        case DIRECT:
-            i = block_start_idx.first;
-            if (stay_in_direct)
-                j = block_final_idx.first;
-            else
-                j = N_DIRECT;
+    /* We jump to the next case without a break if we need to read more block
+    * from the next level. I.e. we just from direct to indir_1 and from indir_1 to indir_2.
+    * We assume that a file is stored sequentially in the sense that we start to fill
+    * sequentially indir_1 after we have sequentially filled direct, and the same for indir_2.
+    *
+    */
+    switch(level)
+    {
+    case DIRECT:
+        i = block_start_idx.first;
+        if (stay_in_direct)
+            j = block_final_idx.first;
+        else
+            j = N_DIRECT;
 
+        ret = fetch_inode_data_block(&inode, DIRECT, i, 0, NULL, false, data);
+        if (ret < 0)
+            return ret;
+
+        /* there is the case where we start and end in the same block
+         * so just grab the data and exit the switch.
+         */
+        if (stay_in_direct && i == j) //i == j, should be enought
+        {
+            /* grab the data fom pos_start to pos_final */
+            memcpy(buf, &data[pos_start], pos_final - pos_start + 1);
+            nbytes = pos_final - pos_start + 1;
+            break;
+        }
+
+        /* (i != j) && (don't care about stay_in_direct), so we can put and else here.
+         * grab the data fom pos_start to the end of the block
+         */
+        memcpy(buf+nbytes, &data[pos_start], FS_BLOCK_SIZE - pos_start);
+        nbytes += FS_BLOCK_SIZE - pos_start;
+
+        /* we immediately move to the next block, i.e. ++i, after the memcpy above */
+        while (++i < j)
+        {
             ret = fetch_inode_data_block(&inode, DIRECT, i, 0, NULL, false, data);
             if (ret < 0)
                 return ret;
 
-            /* there is the case where we start and end in the same block
-             * so just grab the data and exit the switch.
+            memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
+            nbytes += FS_BLOCK_SIZE;
+        }
+
+        /* copy the last of our data and exit the switch */
+        if (stay_in_direct)
+        {
+            ret = fetch_inode_data_block(&inode, DIRECT, i, 0, NULL, false, data);
+            if (ret < 0)
+                return ret;
+
+            /* grab the first pos_final data only */
+            memcpy(buf+nbytes, data, pos_final + 1);
+            nbytes += pos_final + 1;
+            break;
+        }
+
+    case INDIR_1:
+        /* set the start and final block indices */
+        if (start_in_indir1)
+        {
+            i = block_start_idx.first;
+        }
+        else
+        {
+            i = 0;
+            /* we have crossed here from case DIRECT, therefore pos_start
+             * has been used and we can reset it here. This avoids puting the
+             * block fetch and memcpy inside the if-else stmt.
              */
-            if (stay_in_direct && i == j) //i == j, should be enought
-            {
-                /* grab the data fom pos_start to pos_final */
-                memcpy(buf, &data[pos_start], pos_final - pos_start + 1);
-                nbytes = pos_final - pos_start + 1;
-                break;
-            }
+            pos_start = 0;
+        }
 
-            /* (i != j) && (don't care about stay_in_direct), so we can put and else here.
-             * grab the data fom pos_start to the end of the block
-             */
-            memcpy(buf+nbytes, &data[pos_start], FS_BLOCK_SIZE - pos_start);
-            nbytes += FS_BLOCK_SIZE - pos_start;
+        if (stay_in_indir1)
+            j = block_final_idx.first;
+        else
+            j = IDX_PER_BLK;
 
-            /* we immediately move to the next block, i.e. ++i, after the memcpy above */
-            while (++i < j)
-            {
-                ret = fetch_inode_data_block(&inode, DIRECT, i, 0, NULL, false, data);
-                if (ret < 0)
-                    return ret;
+        ret = fetch_inode_data_block(&inode, INDIR_1, i, 0, NULL, false, data);
+        if (ret < 0)
+            return ret;
 
-                memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
-                nbytes += FS_BLOCK_SIZE;
-            }
-
-            /* copy the last of our data and exit the switch */
-            if (stay_in_direct)
-            {
-                ret = fetch_inode_data_block(&inode, DIRECT, i, 0, NULL, false, data);
-                if (ret < 0)
-                    return ret;
-
-                /* grab the first pos_final data only */
-                memcpy(buf+nbytes, data, pos_final + 1);
-                nbytes += pos_final + 1;
-                break;
-            }
-
-        case INDIR_1:
-            /* set the start and final block indices */
+        /* there is the case where we start and end in the same block
+         * so just grab the data and exit the switch.
+         */
+        if (i == j) //implies that stay_in_indir1 is also true, but that's not the criterion
+        {
+            /* grab the data fom pos_start to pos_final and exit the switch */
             if (start_in_indir1)
             {
-                i = block_start_idx.first;
+                memcpy(buf+nbytes, &data[pos_start], pos_final - pos_start + 1);
+                nbytes += pos_final - pos_start + 1;
             }
             else
             {
-                i = 0;
-                /* we have crossed here from case DIRECT, therefore pos_start
-                 * has been used and we can reset it here. This avoids puting the
-                 * block fetch and memcpy inside the if-else stmt.
-                 */
-                pos_start = 0;
+                memcpy(buf+nbytes, data, pos_final + 1);
+                nbytes += pos_final + 1;
             }
 
-            if (stay_in_indir1)
-                j = block_final_idx.first;
-            else
-                j = IDX_PER_BLK;
+            break;
+        }
 
+        /* if we start_in_indir1 then nbytes = 0 as expected and needed
+         * else if we came from upstairs, i.e. case DIRECT, then we increase
+         * the pointer accordingly.
+         */
+        memcpy(buf+nbytes, &data[pos_start], FS_BLOCK_SIZE - pos_start);
+        nbytes += FS_BLOCK_SIZE - pos_start;
+
+        /* the rest of the logic is the same as in the DIRECT case. */
+
+        /* we immediately move to the next block, i.e. ++i, after the memcpy above */
+        while (++i < j)
+        {
             ret = fetch_inode_data_block(&inode, INDIR_1, i, 0, NULL, false, data);
             if (ret < 0)
                 return ret;
 
-            /* there is the case where we start and end in the same block
-             * so just grab the data and exit the switch.
+            memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
+            nbytes += FS_BLOCK_SIZE;
+        }
+
+        /* copy the last of our data and exit the switch */
+        if (stay_in_indir1)
+        {
+            ret = fetch_inode_data_block(&inode, INDIR_1, i, 0, NULL, false, data);
+            if (ret < 0)
+                return ret;
+
+            /* grab the first pos_final data only */
+            memcpy(buf+nbytes, data, pos_final + 1);
+            nbytes += pos_final + 1;
+
+            break;
+        }
+
+    case INDIR_2:
+        /* set the start and final block indices */
+        if (start_in_indir2)
+        {
+            i = block_start_idx.first;
+            j = block_start_idx.second;
+        }
+        else
+        {
+            i = 0;
+            j = 0;
+            /* we have crossed from case INDIR_1, therefore pos_start
+             * has been used and we can reset it here. This avoids puting the
+             * block fetch and memcpy inside the if-else stmt.
              */
-            if (i == j) //implies that stay_in_indir1 is also true, but that's not the criterion
+            pos_start = 0;
+        }
+
+        i2 = block_final_idx.first;
+        j2 = block_final_idx.second;
+        ret = fetch_inode_data_block(&inode, INDIR_2, i, j, idx_ary_second, true, data);
+        if (ret < 0)
+            return ret;
+
+
+        /* there is the case where we start and end in the same row.
+         * so just grab the data of the respected columns and exit the switch.
+         */
+        if (i == i2)
+        {
+            /* this if-else stmt uses the same row, so we don't need to look
+             * into another indir_2 row
+             */
+            if (j == j2)    //same row and column
             {
-                /* grab the data fom pos_start to pos_final and exit the switch */
-                if (start_in_indir1)
+                if (start_in_indir2)
                 {
                     memcpy(buf+nbytes, &data[pos_start], pos_final - pos_start + 1);
                     nbytes += pos_final - pos_start + 1;
@@ -649,162 +732,60 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
                     memcpy(buf+nbytes, data, pos_final + 1);
                     nbytes += pos_final + 1;
                 }
-
-                break;
             }
-
-            /* if we start_in_indir1 then nbytes = 0 as expected and needed
-             * else if we came from upstairs, i.e. case DIRECT, then we increase
-             * the pointer accordingly.
-             */
-            memcpy(buf+nbytes, &data[pos_start], FS_BLOCK_SIZE - pos_start);
-            nbytes += FS_BLOCK_SIZE - pos_start;
-
-            /* the rest of the logic is the same as in the DIRECT case. */
-
-            /* we immediately move to the next block, i.e. ++i, after the memcpy above */
-            while (++i < j)
+            else    // grab the data from the next rows, i.e. more that one
             {
-                ret = fetch_inode_data_block(&inode, INDIR_1, i, 0, NULL, false, data);
-                if (ret < 0)
-                    return ret;
-
-                memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
-                nbytes += FS_BLOCK_SIZE;
-            }
-
-            /* copy the last of our data and exit the switch */
-            if (stay_in_indir1)
-            {
-                ret = fetch_inode_data_block(&inode, INDIR_1, i, 0, NULL, false, data);
-                if (ret < 0)
-                    return ret;
-
-                /* grab the first pos_final data only */
-                memcpy(buf+nbytes, data, pos_final + 1);
-                nbytes += pos_final + 1;
-
-                break;
-            }
-
-        case INDIR_2:
-            /* set the start and final block indices */
-            if (start_in_indir2)
-            {
-                i = block_start_idx.first;
-                j = block_start_idx.second;
-            }
-            else
-            {
-                i = 0;
-                j = 0;
-                /* we have crossed from case INDIR_1, therefore pos_start
-                 * has been used and we can reset it here. This avoids puting the
-                 * block fetch and memcpy inside the if-else stmt.
+                /* Copy the last columns of the last row.
+                 * Must go until j2-1 in order to pull the last data with j2 and pos_final
                  */
-                pos_start = 0;
-            }
-
-            i2 = block_final_idx.first;
-            j2 = block_final_idx.second;
-            ret = fetch_inode_data_block(&inode, INDIR_2, i, j, idx_ary_second, true, data);
-            if (ret < 0)
-                return ret;
-
-
-            /* there is the case where we start and end in the same row.
-             * so just grab the data of the respected columns and exit the switch.
-             */
-            if (i == i2)
-            {
-                /* this if-else stmt uses the same row, so we don't need to look
-                 * into another indir_2 row
-                 */
-                if (j == j2)    //same row and column
+                for (k = j; k < j2; k++)
                 {
-                    if (start_in_indir2)
-                    {
-                        memcpy(buf+nbytes, &data[pos_start], pos_final - pos_start + 1);
-                        nbytes += pos_final - pos_start + 1;
-                    }
-                    else
-                    {
-                        memcpy(buf+nbytes, data, pos_final + 1);
-                        nbytes += pos_final + 1;
-                    }
-                }
-                else    // grab the data from the next rows, i.e. more that one
-                {
-                    /* Copy the last columns of the last row.
-                     * Must go until j2-1 in order to pull the last data with j2 and pos_final
-                     */
-                    for (k = j; k < j2; k++)
-                    {
-                        ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
-                        if (ret < 0)
-                            return ret;
-
-                        memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
-                        nbytes += FS_BLOCK_SIZE;
-                    } //for
-
-                    ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
-                    if (ret < 0)
-                        return ret;
-
-                    memcpy(buf+nbytes, data, pos_final + 1);
-                    nbytes += pos_final + 1;
-                }
-
-                break;
-            } // if (i == i2)
-
-            /* its  the case that i < i2 so we read the remaining parts of that row */
-            memcpy(buf+nbytes, &data[pos_start], FS_BLOCK_SIZE - pos_start);
-            nbytes += FS_BLOCK_SIZE - pos_start;
-
-            for (k = j+1; k < IDX_PER_BLK; k++)
-            {
-                ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
-                if (ret < 0)
-                    return ret;
-
-                memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
-                nbytes += FS_BLOCK_SIZE;
-            }//for k
-
-
-            while (++i < i2)
-            {
-                /* Load next row, from column 0 and fill idx_ary_second
-                 * We fill idx_ary_second when changing i in INDIR_2.
-                 */
-                ret = fetch_inode_data_block(&inode, INDIR_2, i, 0, idx_ary_second, true, data);
-                if (ret < 0)
-                    return ret;
-
-                for (k = 0; k < IDX_PER_BLK; k++)
-                {
-                    /* load the columns using our cached idx_ary_second */
                     ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
                     if (ret < 0)
                         return ret;
 
                     memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
                     nbytes += FS_BLOCK_SIZE;
-                }//for
-            } //while
+                } //for
 
-            /* load the last row, from column 0 and fill idx_ary_second */
+                ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
+                if (ret < 0)
+                    return ret;
+
+                memcpy(buf+nbytes, data, pos_final + 1);
+                nbytes += pos_final + 1;
+            }
+
+            break;
+        } // if (i == i2)
+
+        /* its  the case that i < i2 so we read the remaining parts of that row */
+        memcpy(buf+nbytes, &data[pos_start], FS_BLOCK_SIZE - pos_start);
+        nbytes += FS_BLOCK_SIZE - pos_start;
+
+        for (k = j+1; k < IDX_PER_BLK; k++)
+        {
+            ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
+            if (ret < 0)
+                return ret;
+
+            memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
+            nbytes += FS_BLOCK_SIZE;
+        }//for k
+
+
+        while (++i < i2)
+        {
+            /* Load next row, from column 0 and fill idx_ary_second
+             * We fill idx_ary_second when changing i in INDIR_2.
+             */
             ret = fetch_inode_data_block(&inode, INDIR_2, i, 0, idx_ary_second, true, data);
             if (ret < 0)
                 return ret;
 
-            /* Copy the last columns of the last row.
-             * Must go until j2-1 in order to pull the last data with j2 and pos_final
-             */
-            for (k = 0; k < j2; k++)
+            for (k = 0; k < IDX_PER_BLK; k++)
             {
+                /* load the columns using our cached idx_ary_second */
                 ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
                 if (ret < 0)
                     return ret;
@@ -812,16 +793,35 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
                 memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
                 nbytes += FS_BLOCK_SIZE;
             }//for
+        } //while
 
-            /* load the last column */
+        /* load the last row, from column 0 and fill idx_ary_second */
+        ret = fetch_inode_data_block(&inode, INDIR_2, i, 0, idx_ary_second, true, data);
+        if (ret < 0)
+            return ret;
+
+        /* Copy the last columns of the last row.
+         * Must go until j2-1 in order to pull the last data with j2 and pos_final
+         */
+        for (k = 0; k < j2; k++)
+        {
             ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
             if (ret < 0)
                 return ret;
 
-            memcpy(buf+nbytes, data, pos_final + 1);
-            nbytes += pos_final + 1;
+            memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
+            nbytes += FS_BLOCK_SIZE;
+        }//for
 
-            break; //for fun
+        /* load the last column */
+        ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
+        if (ret < 0)
+            return ret;
+
+        memcpy(buf+nbytes, data, pos_final + 1);
+        nbytes += pos_final + 1;
+
+        break; //for fun
     }//switch
 
     return nbytes;
