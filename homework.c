@@ -30,6 +30,14 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
                            void * data);
 int disk_write_inode(struct fs7600_inode, uint32_t);
 int mknod_mkdir_helper(const char *, mode_t, bool);
+int validate_inode_data_block(struct fs7600_inode *, uint32_t,
+                              case_level, uint32_t, uint32_t,
+                              uint32_t *, uint32_t *, uint32_t *);
+int free_data_block_search(uint32_t *);
+int write_data_block(const char *, uint32_t, uint32_t, uint32_t);
+int update_inode_size(struct fs7600_inode *, uint32_t, uint32_t);
+
+
 
 
 extern int homework_part;       /* set by '-part n' command-line option */
@@ -578,7 +586,7 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
                 break;
             }
 
-            /* (i != j) && (don't care about stay_in_direct), so we can put and else here.
+            /* (i != j) && (don't care about stay_in_direct), so we could put and else stmt here.
             * grab the data fom pos_start to the end of the block
             */
             memcpy(buf+nbytes, &data[pos_start], FS_BLOCK_SIZE - pos_start);
@@ -840,8 +848,9 @@ static int fs_write(const char *path, const char *buf, size_t len,
 {
     struct path_trans pt;
     struct fs7600_inode inode;
-    uint32_t i, j, k, i2, j2, nbytes = 0;
-
+    uint32_t i, j, k, i2, j2, n, nbytes = 0;
+    uint32_t inode_index, block_number;
+    uint32_t idx_ary_first[IDX_PER_BLK], idx_ary_second[IDX_PER_BLK];
     size_t size, pos_start, pos_final;
     case_level level;
 
@@ -881,8 +890,9 @@ static int fs_write(const char *path, const char *buf, size_t len,
         }
     }
 
-    inode = inodes[pt.inode_index];
-    size  = inode.size;
+    inode_index = pt.inode_index;
+    inode       = inodes[inode_index];
+    size        = inode.size;
 
     /* Write only to files. We only deal with files and dirs, that why
      * a check !S_ISREG is accompanied by a return value of -EISDIR.
@@ -999,14 +1009,149 @@ static int fs_write(const char *path, const char *buf, size_t len,
             else
                 j = N_DIRECT;
 
+            ret = validate_inode_data_block(&inode, inode_index, DIRECT, i, 0, NULL, NULL, &block_number);
+            if (ret < 0)
+                return ret;
+
+            /* there is the case where we start and end in the same block
+            * so just grab the data and exit the switch.
+            */
+            if (stay_in_direct && i == j) //i == j, should be enought
+            {
+                /* write the data from pos_start to pos_final */
+                n = pos_final - pos_start + 1;
+                write_data_block(buf+nbytes, block_number, pos_start, n);
+                update_inode_size(&inode, inode_index, n);
+                nbytes = n;
+                break;
+            }
+
+            /* write to dblock, update inode size, flush updated inode and dblock to disk */
+            n = FS_BLOCK_SIZE - pos_start;
+            write_data_block(buf+nbytes, block_number, 0, n);
+            update_inode_size(&inode, inode_index, n);
+            nbytes += n;
+
+            /* we immediately move to the next block, i.e. ++i, after the memcpy above */
+            while (++i < j)
+            {
+                ret = validate_inode_data_block(&inode, inode_index, DIRECT, i, 0, NULL, NULL, &block_number);
+                if (ret < 0)
+                    return ret;
+
+                n = FS_BLOCK_SIZE;
+                write_data_block(buf+nbytes, block_number, 0, n);
+                update_inode_size(&inode, inode_index, n);
+                nbytes += n;
+            }
+
+            /* copy the last of our data and exit the switch */
+            if (stay_in_direct)
+            {
+                ret = validate_inode_data_block(&inode, inode_index, DIRECT, i, 0, NULL, NULL, &block_number);
+                if (ret < 0)
+                    return ret;
+
+                n = pos_final + 1;
+                write_data_block(buf+nbytes, block_number, 0, n);
+                update_inode_size(&inode, inode_index, n);
+                nbytes += n;
+                break;
+            }
+
+        case INDIR_1:
+            /* set the start and final block indices */
+            if (start_in_indir1)
+            {
+                i = block_start_idx.first;
+            }
+            else
+            {
+                i = 0;
+                /* we have crossed here from case DIRECT, therefore pos_start
+                * has been used and we can reset it here. This avoids puting the
+                * block fetch and memcpy inside the if-else stmt.
+                */
+                pos_start = 0;
+            }
+
+            if (stay_in_indir1)
+                j = block_final_idx.first;
+            else
+                j = IDX_PER_BLK;
+
+            ret = validate_inode_data_block(&inode, inode_index, INDIR_1, i, 0, idx_ary_first, NULL, &block_number);
+            if (ret < 0)
+                return ret;
+
+            /* there is the case where we start and end in the same block
+            * so just grab the data and exit the switch.
+            */
+            if (i == j) //implies that stay_in_indir1 is also true, but that's not the criterion
+            {
+                /* grab the data fom pos_start to pos_final and exit the switch */
+                if (start_in_indir1)
+                {
+                    n = pos_final - pos_start + 1;
+                    write_data_block(buf+nbytes, block_number, pos_start, n);
+                    update_inode_size(&inode, inode_index, n);
+                    nbytes += n;
+                }
+                else
+                {
+                    n = pos_final + 1;
+                    write_data_block(buf+nbytes, block_number, 0, n);
+                    update_inode_size(&inode, inode_index, n);
+                    nbytes += n;
+                }
+
+                break;
+            }
+
+            /* write to dblock, update inode size, flush updated inode and dblock to disk */
+            n = FS_BLOCK_SIZE - pos_start;
+            write_data_block(buf+nbytes, block_number, 0, n);
+            update_inode_size(&inode, inode_index, n);
+            nbytes += n;
+
+            /* the rest of the logic is the same as in the DIRECT case. */
+
+            /* we immediately move to the next block, i.e. ++i */
+            while (++i < j)
+            {
+                ret = validate_inode_data_block(&inode, inode_index, INDIR_1, i, 0, idx_ary_first, NULL, &block_number);
+                if (ret < 0)
+                    return ret;
+
+                n = FS_BLOCK_SIZE;
+                write_data_block(buf+nbytes, block_number, 0, n);
+                update_inode_size(&inode, inode_index, n);
+                nbytes += n;
+            }
+
+            /* copy the last of our data and exit the switch */
+            if (stay_in_indir1)
+            {
+                ret = validate_inode_data_block(&inode, inode_index, INDIR_1, i, 0, idx_ary_first, NULL, &block_number);
+                if (ret < 0)
+                    return ret;
+
+                n = pos_final + 1;
+                write_data_block(buf+nbytes, block_number, 0, n);
+                update_inode_size(&inode, inode_index, n);
+                nbytes += n;
+
+                break;
+            }
+
+
+
+
     } //switch
 
 
 
-
-
-
-    return -EOPNOTSUPP;
+    return nbytes;
 }
 
 static int fs_open(const char *path, struct fuse_file_info *fi)
@@ -1192,8 +1337,10 @@ void inode_to_stat(struct fs7600_inode * inode, uint32_t inode_index, struct sta
     return;
 }
 
-/* depending on the level, we fetch the corresponding data block.
- * we pay the overhead of calling a function with a lot of args
+/* Depending on the level, we fetch the corresponding data block.
+ * i is an index for the case of DIRECT and INDIR_1.
+ * i,j are indices for the case of INDIR_2.
+ * We pay the overhead of calling a function with a lot of args.
  */
 int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32_t i,
                            uint32_t j, uint32_t * idx_ary_second, bool fill_ary_second,
@@ -1382,7 +1529,7 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
             return -ENOSPC;
     } //if !new_block
 
-    /* find the next availabe inode */
+    /* find the next available inode */
     found = false;
     for (i = 0; i < num_inodes; i++)
     {
@@ -1434,6 +1581,204 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
 
     /* sync the disk with memory */
     disk_write_inode(inodes[inode_index], inode_index);
+
+    return SUCCESS;
+}
+
+/* We check if an inode's data block is valid so that we can write.
+ * If not, we search for an available data block and assign that to the inode's pointer.
+ * i is an index for the case of DIRECT and INDIR_1.
+ * i,j are indices for the case of INDIR_2.
+ *
+ * writes to inode, idx_ary_{first, second}, block_number
+ *
+ * TODO: So many args...
+ */
+int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
+                              case_level level, uint32_t i, uint32_t j,
+                              uint32_t * idx_ary_first, uint32_t * idx_ary_second,
+                              uint32_t * ret_block_number)
+{
+    uint32_t block_number;
+    int ret;
+
+    switch(level)
+    {
+        case DIRECT:
+            block_number = inode->direct[i];
+            if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+            {
+                ret = free_data_block_search( &block_number );
+                if (ret < 0)
+                    return ret;
+                else
+                {
+                    inode->direct[i] = block_number;
+                    /* sync the inodes array and then the disk with inodes array */
+                    inodes[inode_index] = *inode;
+                    disk_write_inode(inodes[inode_index], inode_index);
+                }
+            }
+
+            *ret_block_number = block_number;
+            break;
+
+        case INDIR_1:
+            /* is indir_1 valid? */
+            if ( !(inode->indir_1) || !FD_ISSET(inode->indir_1 - data_start, data_map) )
+            {
+                /* allocate a datablock for indir_1 */
+                ret = free_data_block_search( &block_number );
+                if (ret < 0)
+                    return ret;
+                else
+                {
+                    inode->indir_1 = block_number;
+                    /* sync the inodes array and then the disk with inodes array
+                     * TODO: probably the disk write below can be delayed until when allocating
+                     * the first data block for indir_1, since indir_1 was invalid in the first place.
+                     */
+                    inodes[inode_index] = *inode;
+                    disk_write_inode(inodes[inode_index], inode_index);
+                }
+            }
+
+            /* read the first level of pointers */
+            disk->ops->read(disk, block_number, 1, idx_ary_first);
+
+            block_number = idx_ary_first[i];
+            if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+            {
+                ret = free_data_block_search( &block_number );
+                if (ret < 0)
+                    return ret;
+                else
+                {
+                    idx_ary_first[i]  = block_number;
+                    /* sync the inodes array and then the disk with inodes array */
+                    inodes[inode_index] = *inode;
+                    disk_write_inode(inodes[inode_index], inode_index);
+
+                    /* write the pointers of indir_1 back to disk */
+                    disk->ops->write(disk, block_number, 1, idx_ary_first);
+                }
+            }
+
+            *ret_block_number = block_number;
+            break;
+
+        case INDIR_2:
+            /* is indir_2 valid? */
+            if ( !(inode->indir_2) || !FD_ISSET(inode->indir_2 - data_start, data_map) )
+            {
+                /* allocate a datablock for indir_2 */
+                ret = free_data_block_search( &block_number );
+                if (ret < 0)
+                    return ret;
+                else
+                {
+                    inode->indir_2 = block_number;
+                    /* sync the inodes array and then the disk with inodes array
+                     * TODO: probably the disk write below can be delayed until when allocating
+                     * the first data block for indir_2, since indir_2 was invalid in the first place.
+                     */
+                    inodes[inode_index] = *inode;
+                    disk_write_inode(inodes[inode_index], inode_index);
+                }
+            }
+
+            /* read the first level of pointers */
+            disk->ops->read(disk, block_number, 1, idx_ary_first);
+
+            block_number = idx_ary_first[i];
+            if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+            {
+                ret = free_data_block_search( &block_number );
+                if (ret < 0)
+                    return ret;
+                else
+                {
+                    idx_ary_first[i]  = block_number;
+                    /* sync the inodes array and then the disk with inodes array */
+                    inodes[inode_index] = *inode;
+                    disk_write_inode(inodes[inode_index], inode_index);
+
+                    /* write the pointers of indir_1 back to disk */
+                    disk->ops->write(disk, block_number, 1, idx_ary_first);
+                }
+            }
+
+            /* read the second level of pointers */
+            disk->ops->read(disk, block_number, 1, idx_ary_second);
+
+            block_number = idx_ary_second[j];
+            if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+            {
+                ret = free_data_block_search( &block_number );
+                if (ret < 0)
+                    return ret;
+                else
+                {
+                    idx_ary_second[j]  = block_number;
+                    /* sync the inodes array and then the disk with inodes array */
+                    inodes[inode_index] = *inode;
+                    disk_write_inode(inodes[inode_index], inode_index);
+
+                    /* write the pointers of indir_1 back to disk */
+                    disk->ops->write(disk, block_number, 1, idx_ary_second);
+                }
+            }
+
+            *ret_block_number = block_number;
+            break; //for fun
+    }
+
+    return SUCCESS;
+}
+
+/* Find the next available data block, if any */
+int free_data_block_search(uint32_t * block_number)
+{
+    for (uint32_t i = 0; i < num_dblocks; i++)
+        if (!FD_ISSET(i, data_map))
+        {
+            FD_SET(i, data_map);
+            *block_number = i + data_start;
+
+            return SUCCESS;
+        }
+
+    return -ENOSPC;
+}
+
+/* Write data to a dblock.
+ * We load its data
+ * We change the data
+ * We write the new data back to the disk
+ */
+int write_data_block(const char * buf, uint32_t block_number, uint32_t pos_start, uint32_t n)
+{
+    char data[FS_BLOCK_SIZE];
+
+    disk->ops->read(disk, block_number, 1, data);
+
+    memcpy(&data[pos_start], buf, n);
+
+    disk->ops->write(disk, block_number, 1, data);
+
+    return SUCCESS;
+}
+
+/* Increment an inode's filesize.
+ * We update the inode var used in the caller function
+ * We update the gloabal inodes array
+ * We write the result back to the disk
+ */
+int update_inode_size(struct fs7600_inode * inode, uint32_t inode_index, uint32_t n)
+{
+    inode->size += n;
+    inodes[inode_index] = *inode;
+    disk_write_inode(*inode, inode_index);
 
     return SUCCESS;
 }
