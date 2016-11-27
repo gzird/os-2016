@@ -932,7 +932,9 @@ struct fuse_operations fs_ops = {
 };
 
 /*
- *  Helper functions
+ * Helper functions
+ *
+ * TODO: Move the logic to a separate file.
  */
 
 /*
