@@ -1660,7 +1660,7 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
                     disk_write_inode(inodes[inode_index], inode_index);
 
                     /* write the pointers of indir_1 back to disk */
-                    disk->ops->write(disk, block_number, 1, idx_ary_first);
+                    disk->ops->write(disk, inode->indir_1, 1, idx_ary_first);
                 }
             }
 
@@ -1704,7 +1704,7 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
                     disk_write_inode(inodes[inode_index], inode_index);
 
                     /* write the pointers of indir_1 back to disk */
-                    disk->ops->write(disk, block_number, 1, idx_ary_first);
+                    disk->ops->write(disk, inode->indir_1, 1, idx_ary_first);
                 }
             }
 
@@ -1725,7 +1725,7 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
                     disk_write_inode(inodes[inode_index], inode_index);
 
                     /* write the pointers of indir_1 back to disk */
-                    disk->ops->write(disk, block_number, 1, idx_ary_second);
+                    disk->ops->write(disk, idx_ary_first[i], 1, idx_ary_second);
                 }
             }
 
