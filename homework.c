@@ -1117,7 +1117,7 @@ static int fs_write(const char *path, const char *buf, size_t len,
     ret = path_translate(path, &pt);
     if (ret < 0)
     {
-        /* if file does not exist create it, otherwise something else wen't wrong */
+        /* if file does not exist create it, otherwise something else went wrong */
         if (ret == -ENOENT)
         {
             mode_t mode = 01644 | S_IFREG;
