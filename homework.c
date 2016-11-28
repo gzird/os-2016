@@ -421,8 +421,8 @@ static int fs_truncate(const char *path, off_t len)
                 block_number = inode.direct[i];
                 if (block_number && FD_ISSET(block_number - data_start, data_map))
                 {
-                    inode.direct[i] = 0;
                     FD_CLR(block_number - data_start, data_map);
+                    inode.direct[i] = 0;
                 }
                 else
                 {
@@ -434,10 +434,10 @@ static int fs_truncate(const char *path, off_t len)
                 break;
 
         case INDIR_1:
-            if (stay_in_direct)
+            if (stay_in_indir1)
                 j = block_final_idx.first + 1;
             else
-                j = N_DIRECT + IDX_PER_BLK;
+                j = IDX_PER_BLK;
 
             block_number = inode.indir_1;
             if (block_number && FD_ISSET(block_number - data_start, data_map))
@@ -449,8 +449,8 @@ static int fs_truncate(const char *path, off_t len)
                     block_number = idx_ary_first[i];
                     if (block_number && FD_ISSET(block_number - data_start, data_map))
                     {
-                        idx_ary_first[i] = 0;
                         FD_CLR(block_number - data_start, data_map);
+                        idx_ary_first[i] = 0;
                     }
                     else
                     {
@@ -504,8 +504,8 @@ static int fs_truncate(const char *path, off_t len)
                     block_number = idx_ary_second[j];
                     if (block_number && FD_ISSET(block_number - data_start, data_map))
                     {
-                        idx_ary_second[j] = 0;
                         FD_CLR(block_number - data_start, data_map);
+                        idx_ary_second[j] = 0;
                     }
                     else
                     {
@@ -514,13 +514,13 @@ static int fs_truncate(const char *path, off_t len)
                 }
 
                 /* clear the first level of pointer, after clearing the second level */
-                idx_ary_first[i] = 0;
                 FD_CLR(idx_ary_first[i] - data_start, data_map);
+                idx_ary_first[i] = 0;
             }
 
             /* finally clear indir_2 */
-            inode.indir_2 = 0;
             FD_CLR(inode.indir_2 - data_start, data_map);
+            inode.indir_2 = 0;
 
             break; //for fun
     } // switch
@@ -538,14 +538,25 @@ static int fs_truncate(const char *path, off_t len)
  */
 static int fs_unlink(const char *path)
 {
-    uint32_t block_number;
+    struct path_trans pt;
+    uint32_t block_number, parent_len;
     char *pathc, *bname, *parent;
+    bool found = false;
     int ret;
 
     /* first truncate and then remove the directory entry of the file */
     ret = fs_truncate(path, 0);
     if (ret < 0)
         return ret;
+
+    /* find out if path is file */
+    ret = path_translate(path, &pt);
+    if (ret < 0)
+        return ret;
+
+    /* only delete files */
+    if (!S_ISREG(inodes[pt.inode_index].mode))
+        return -EISDIR;
 
     pathc = strdup(path);
     if (!pathc)
@@ -554,8 +565,12 @@ static int fs_unlink(const char *path)
     /* get the basename of the file*/
     bname = basename(pathc);
 
+    /* get the parent direrntry */
     parent_len = strlen(pathc) - strlen(bname);
     parent = (char *) calloc(parent_len + 1,  sizeof(char));
+    if (!parent)
+        return -ENOMEM;
+
     strncpy(parent, pathc, parent_len);
     path_translate(parent, &pt);
 
@@ -563,14 +578,29 @@ static int fs_unlink(const char *path)
     if (!dblock)
         return -ENOMEM;
 
+    /* get the direntry's data block */
     block_number = inodes[pt.inode_index].direct[0];
+    disk->ops->read(disk, block_number, 1, dblock);
 
+    /* look for the filename to delete */
+    for (int i = 0; i < DIRENT_PER_BLK; i++)
+    {
+        if (dblock[i].valid && strcmp(bname, dblock[i].name) == 0)
+        {
+            dblock[i].valid = false;
+            found = true;
+            break;
+        }
+    }
 
-
-    free(bname);
     free(parent);
-    free(pathc);
-    return -EOPNOTSUPP;
+
+    if (!found)
+        return -EINVAL; //should not happen
+    else
+        disk->ops->write(disk, block_number, 1, dblock);
+
+    return SUCCESS;
 }
 
 /* rmdir - remove a directory
@@ -1932,6 +1962,8 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
 
     /* sync the disk with memory */
     disk_write_inode(inodes[inode_index], inode_index);
+
+    free(parent);
 
     return SUCCESS;
 }
