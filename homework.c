@@ -1121,7 +1121,7 @@ static int fs_write(const char *path, const char *buf, size_t len,
         if (ret == -ENOENT)
         {
             mode_t mode = 01644 | S_IFREG;
-            ret2 = mknod(path, mode, 0);
+            ret2 = fs_mknod(path, mode, 0);
             if (ret2 < 0)
                 return ret2;
             else
