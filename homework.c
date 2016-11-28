@@ -346,7 +346,13 @@ static int fs_truncate(const char *path, off_t len)
 {
     struct path_trans pt;
     struct fs7600_inode inode;
-    uint32_t block_number, inode_index;
+    struct block_idx block_final_idx;
+    uint32_t i, j, i2, j2;
+    uint32_t inode_index, block_number;
+    uint32_t idx_ary_first[IDX_PER_BLK], idx_ary_second[IDX_PER_BLK];
+    uint32_t abs_block_final_idx;
+    bool stay_in_direct, stay_in_indir1;
+    case_level level;
     int ret;
 
     /* you can cheat by only implementing this for the case of len==0,
@@ -362,18 +368,165 @@ static int fs_truncate(const char *path, off_t len)
     inode_index = pt.inode_index;
     inode       = inodes[inode_index];
 
+    /* only truncate files */
     if (!S_ISREG(inode.mode))
         return -EISDIR;
 
-    for (int i = 0; i < N_DIRECT; i++)
+    if (inode.size == 0)
+        return SUCCESS;
+
+    abs_block_final_idx = (uint32_t) ((inode.size - 1) / FS_BLOCK_SIZE);
+
+    if (abs_block_final_idx < N_DIRECT)
     {
-        if (inode.direct[i])
-        {
-        }
+        /* based on the (absolute) (offset + len) we finish in some direct block */
+        stay_in_direct = true;
+        stay_in_indir1 = false;
+        block_final_idx.first  = abs_block_final_idx;
+        block_final_idx.second = 0; // not used in this case
+    }
+    else if (abs_block_final_idx < N_DIRECT + IDX_PER_BLK) // implied: && >= N_DIRECT
+    {
+        /* based on the (absolute) (offset + len) we finish in some indir_1 block */
+        stay_in_direct = false;
+        stay_in_indir1 = true;
+        block_final_idx.first  = abs_block_final_idx - N_DIRECT;
+        block_final_idx.second = 0; // not used in this case
+    }
+    else
+    {
+        /* based on the (absolute) (offset + len) we finish in some indir_2 block */
+        stay_in_direct = false;
+        stay_in_indir1 = false;
+        block_final_idx.first  = (uint32_t) ( (abs_block_final_idx - N_DIRECT - IDX_PER_BLK) / IDX_PER_BLK );
+        block_final_idx.second = (uint32_t) ( (abs_block_final_idx - N_DIRECT - IDX_PER_BLK) % IDX_PER_BLK );
     }
 
-    inode.size = 0;
 
+    /* len = 0 => level = DIRECT
+     * we need the switch for later, to support len > 0.
+     */
+    level = DIRECT;
+
+    switch(level)
+    {
+        case DIRECT:            /* for len = 0 we always start from here */
+            if (stay_in_direct)
+                j = block_final_idx.first + 1;
+            else
+                j = N_DIRECT;
+
+            for (i = 0; i < j; i++)
+            {
+                block_number = inode.direct[i];
+                if (block_number && FD_ISSET(block_number - data_start, data_map))
+                {
+                    inode.direct[i] = 0;
+                    FD_CLR(block_number - data_start, data_map);
+                }
+                else
+                {
+                    return -EINVAL; // should not happen
+                }
+            }// for i
+
+            if (stay_in_direct)
+                break;
+
+        case INDIR_1:
+            if (stay_in_direct)
+                j = block_final_idx.first + 1;
+            else
+                j = N_DIRECT + IDX_PER_BLK;
+
+            block_number = inode.indir_1;
+            if (block_number && FD_ISSET(block_number - data_start, data_map))
+            {
+                /* load the first level of pointer and clear them */
+                disk->ops->read(disk, block_number, 1, idx_ary_first);
+                for (i = 0; i < j; i++)
+                {
+                    block_number = idx_ary_first[i];
+                    if (block_number && FD_ISSET(block_number - data_start, data_map))
+                    {
+                        idx_ary_first[i] = 0;
+                        FD_CLR(block_number - data_start, data_map);
+                    }
+                    else
+                    {
+                        return -EINVAL; // should not happen
+                    }
+                }// for i
+
+                /* write cleared pointer to disk and clear ndir_1 pointer */
+                disk->ops->read(disk, inode.indir_1, 1, idx_ary_first);
+                FD_CLR(inode.indir_1 - data_start, data_map);
+                inode.indir_1 = 0;
+            }
+            else
+            {
+                return -EINVAL; // should not happen
+            }// if indir_1
+
+            if (stay_in_indir1)
+                break;
+
+        case INDIR_2:
+            i2 = block_final_idx.first  + 1 ;
+
+            block_number = inode.indir_2;
+            if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+                return -EINVAL; //should not happen
+
+            /* load the first level of pointers and iterate until the second to last row, i.e. i2 - 1 */
+            disk->ops->read(disk, block_number, 1, idx_ary_first);
+            for (i = 0; i < i2; i++)
+            {
+                block_number = idx_ary_first[i];
+                if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+                    return -EINVAL; //should not happen
+
+                /* read the second level of pointers and clear it */
+                disk->ops->read(disk, block_number, 1, idx_ary_second);
+
+                /* TODO: we should have done this also in read, write.
+                 * That is, pay the cost of a few if checks, to recude the lines of code.
+                 */
+                if (i < i2 - 1)
+                    j2 = IDX_PER_BLK;
+                else
+                    j2 = block_final_idx.second + 1;
+
+
+                for (j = 0; j < j2; j++)
+                {
+                    block_number = idx_ary_second[j];
+                    if (block_number && FD_ISSET(block_number - data_start, data_map))
+                    {
+                        idx_ary_second[j] = 0;
+                        FD_CLR(block_number - data_start, data_map);
+                    }
+                    else
+                    {
+                        return -EINVAL; //should not happen
+                    }
+                }
+
+                /* clear the first level of pointer, after clearing the second level */
+                idx_ary_first[i] = 0;
+                FD_CLR(idx_ary_first[i] - data_start, data_map);
+            }
+
+            /* finally clear indir_2 */
+            inode.indir_2 = 0;
+            FD_CLR(inode.indir_2 - data_start, data_map);
+
+            break; //for fun
+    } // switch
+
+    inode.size = 0;
+    inodes[inode_index] = inode;
+    disk_write_inode(inode, inode_index);
 
     return SUCCESS;
 }
