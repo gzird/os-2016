@@ -490,7 +490,8 @@ static int fs_truncate(const char *path, off_t len)
                 disk->ops->read(disk, block_number, 1, idx_ary_second);
 
                 /* TODO: we should have done this also in read, write.
-                 * That is, pay the cost of a few if checks, to recude the lines of code.
+                 * That is, pay the cost of a few if checks, to recude the lines of code by
+                 * not taking outside the loops the initial and last cases.
                  */
                 if (i < i2 - 1)
                     j2 = IDX_PER_BLK;
