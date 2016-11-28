@@ -538,6 +538,38 @@ static int fs_truncate(const char *path, off_t len)
  */
 static int fs_unlink(const char *path)
 {
+    uint32_t block_number;
+    char *pathc, *bname, *parent;
+    int ret;
+
+    /* first truncate and then remove the directory entry of the file */
+    ret = fs_truncate(path, 0);
+    if (ret < 0)
+        return ret;
+
+    pathc = strdup(path);
+    if (!pathc)
+        return -ENOMEM;
+
+    /* get the basename of the file*/
+    bname = basename(pathc);
+
+    parent_len = strlen(pathc) - strlen(bname);
+    parent = (char *) calloc(parent_len + 1,  sizeof(char));
+    strncpy(parent, pathc, parent_len);
+    path_translate(parent, &pt);
+
+    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (sizeof(struct fs7600_dirent), DIRENT_PER_BLK);
+    if (!dblock)
+        return -ENOMEM;
+
+    block_number = inodes[pt.inode_index].direct[0];
+
+
+
+    free(bname);
+    free(parent);
+    free(pathc);
     return -EOPNOTSUPP;
 }
 
