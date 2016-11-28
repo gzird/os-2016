@@ -897,7 +897,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
     struct block_idx block_start_idx, block_final_idx;
     bool start_in_indir1, start_in_indir2;
     bool stay_in_direct, stay_in_indir1;
-    bool append_block = false;
 
     ret = path_translate(path, &pt);
     if (ret < 0)
@@ -952,14 +951,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
     /* These are the actual indexs of the first and last elements in the first and last data blocks */
     pos_start = offset % FS_BLOCK_SIZE;
     pos_final = (offset + len - 1) % FS_BLOCK_SIZE;
-
-    /* we are in append mode, and our starting position in a new block
-     * that we should allocate,
-     */
-    if (pos_start == 0 && offset == size)
-    {
-        append_block = true;
-    }
 
     abs_block_start_idx = (uint32_t) (offset / FS_BLOCK_SIZE);
     abs_block_final_idx = (uint32_t) ((offset + len - 1) / FS_BLOCK_SIZE);
