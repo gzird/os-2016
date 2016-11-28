@@ -93,7 +93,7 @@ struct fs7600_inode *inodes;
 /* starting points in block numbers */
 const uint32_t inode_map_start = 1;
 uint32_t data_map_start, inode_start, data_start;
-uint32_t num_inodes, num_dblocks;
+uint32_t num_blocks, num_inodes, num_dblocks;
 uint32_t max_filesize;
 
 
@@ -157,6 +157,7 @@ void* fs_init(struct fuse_conn_info *conn)
         exit(1);
     }
 
+    num_blocks    = sb.num_blocks;
     num_dblocks   = sb.num_blocks - data_start;
     num_inodes    = sb.inode_region_sz * INODES_PER_BLK;
     max_filesize  = ( N_DIRECT
@@ -1080,6 +1081,7 @@ static int fs_write(const char *path, const char *buf, size_t len,
             else
                 j = IDX_PER_BLK;
 
+            // TODO: cache idx_ary_first here
             ret = validate_inode_data_block(&inode, inode_index, INDIR_1, i, 0, idx_ary_first, NULL, &block_number);
             if (ret < 0)
                 return ret;
@@ -1144,12 +1146,157 @@ static int fs_write(const char *path, const char *buf, size_t len,
                 break;
             }
 
+        case INDIR_2:
+            /* set the start and final block indices */
+            if (start_in_indir2)
+            {
+                i = block_start_idx.first;
+                j = block_start_idx.second;
+            }
+            else
+            {
+                i = 0;
+                j = 0;
+                /* we have crossed from case INDIR_1, therefore pos_start
+                * has been used and we can reset it here. This avoids puting the
+                * block fetch and memcpy inside the if-else stmt.
+                */
+                pos_start = 0;
+            }
+
+            i2 = block_final_idx.first;
+            j2 = block_final_idx.second;
+            ret = validate_inode_data_block(&inode, inode_index, INDIR_2, i, j, idx_ary_first, idx_ary_second, &block_number);
+            if (ret < 0)
+                return ret;
 
 
+            /* This is the case where we start and end in the same row.
+             * So just write the data of the respected columns and exit the switch.
+             */
+            if (i == i2)
+            {
+                /* this if-else stmt uses the same row, so we don't need to look
+                 * into another indir_2 row
+                 */
+                if (j == j2)    //same row and column
+                {
+                    if (start_in_indir2)
+                    {
+                        n = pos_final - pos_start + 1;
+                        write_data_block(buf+nbytes, block_number, pos_start, n);
+                        update_inode_size(&inode, inode_index, n);
+                        nbytes += n;
+                    }
+                    else
+                    {
+                        n = pos_final + 1;
+                        write_data_block(buf+nbytes, block_number, 0, n);
+                        update_inode_size(&inode, inode_index, n);
+                        nbytes += n;
+                    }
+                }
+                else    // write the data to the next rows, i.e. more that one
+                {
+                    /* Copy the last columns of the last row.
+                    * Must go until j2-1 in order to write the last data with j2 and pos_final
+                    */
+                    for (k = j; k < j2; k++)
+                    {
+                        ret = validate_inode_data_block(&inode, inode_index, INDIR_2, i, k, idx_ary_first, idx_ary_second, &block_number);
+                        if (ret < 0)
+                            return ret;
 
+                        n = FS_BLOCK_SIZE;
+                        write_data_block(buf+nbytes, block_number, 0, n);
+                        update_inode_size(&inode, inode_index, n);
+                        nbytes += n;
+                    } //for
+
+                    ret = validate_inode_data_block(&inode, inode_index, INDIR_2, i, k, idx_ary_first, idx_ary_second, &block_number);
+                    if (ret < 0)
+                        return ret;
+
+                    n = pos_final + 1;
+                    write_data_block(buf+nbytes, block_number, 0, n);
+                    update_inode_size(&inode, inode_index, n);
+                    nbytes += n;
+                }
+
+                break;
+            } // if (i == i2)
+
+            /* it is the case that i < i2 so we write the remaining parts of that row */
+            n = FS_BLOCK_SIZE - pos_start;
+            write_data_block(buf+nbytes, block_number, pos_start, n);
+            update_inode_size(&inode, inode_index, n);
+            nbytes += n;
+
+
+            for (k = j+1; k < IDX_PER_BLK; k++)
+            {
+                ret = validate_inode_data_block(&inode, inode_index, INDIR_2, i, k, idx_ary_first, idx_ary_second, &block_number);
+                if (ret < 0)
+                    return ret;
+
+                n = FS_BLOCK_SIZE;
+                write_data_block(buf+nbytes, block_number, 0, n);
+                update_inode_size(&inode, inode_index, n);
+                nbytes += n;
+            }//for k
+
+
+            while (++i < i2)
+            {
+                /* Load next row, from column 0 and fill idx_ary_second
+                * We fill idx_ary_second when changing i in INDIR_2.
+                */
+                // TODO: cache the indir_2 + idx_ary_first here
+
+                for (k = 0; k < IDX_PER_BLK; k++)
+                {
+                    /* load the columns using our cached idx_ary_second */
+                    ret = validate_inode_data_block(&inode, inode_index, INDIR_2, i, k, idx_ary_first, idx_ary_second, &block_number);
+                    if (ret < 0)
+                        return ret;
+
+                    n = FS_BLOCK_SIZE;
+                    write_data_block(buf+nbytes, block_number, 0, n);
+                    update_inode_size(&inode, inode_index, n);
+                    nbytes += n;
+                }//for
+            } //while
+
+            /* load the last row, from column 0 and fill idx_ary_second */
+            // TODO: cache the indir_2 + idx_ary_first here
+
+            /* Write the last columns of the last row.
+             * Must go until j2-1 in order to write the last data with j2 and pos_final
+             */
+            for (k = 0; k < j2; k++)
+            {
+                ret = validate_inode_data_block(&inode, inode_index, INDIR_2, i, k, idx_ary_first, idx_ary_second, &block_number);
+                if (ret < 0)
+                    return ret;
+
+                n = FS_BLOCK_SIZE;
+                write_data_block(buf+nbytes, block_number, 0, n);
+                update_inode_size(&inode, inode_index, n);
+                nbytes += n;
+            }//for
+
+            /* write the last column */
+            ret = validate_inode_data_block(&inode, inode_index, INDIR_2, i, k, idx_ary_first, idx_ary_second, &block_number);
+            if (ret < 0)
+                return ret;
+
+            n = pos_final + 1;
+            write_data_block(buf+nbytes, block_number, 0, n);
+            update_inode_size(&inode, inode_index, n);
+            nbytes += n;
+
+            break; //for fun
     } //switch
-
-
 
     return nbytes;
 }
@@ -1399,7 +1546,7 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
 
             /* only fetch data if valid */
             block_number = idx_ary_second[j];
-            if (FD_ISSET(block_number - data_start, data_map))
+            if (block_number && FD_ISSET(block_number - data_start, data_map))
                 disk->ops->read(disk, block_number, 1, data);
             else
                 return -ENOENT;
@@ -1624,8 +1771,9 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
             break;
 
         case INDIR_1:
+            block_number = inode->indir_1;
             /* is indir_1 valid? */
-            if ( !(inode->indir_1) || !FD_ISSET(inode->indir_1 - data_start, data_map) )
+            if ( !block_number || !FD_ISSET(block_number - data_start, data_map) )
             {
                 /* allocate a datablock for indir_1 */
                 ret = free_data_block_search( &block_number );
@@ -1647,7 +1795,8 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
             disk->ops->read(disk, block_number, 1, idx_ary_first);
 
             block_number = idx_ary_first[i];
-            if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+
+            if (block_number < data_start || block_number > num_blocks || !FD_ISSET(block_number - data_start, data_map))
             {
                 ret = free_data_block_search( &block_number );
                 if (ret < 0)
@@ -1655,10 +1804,6 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
                 else
                 {
                     idx_ary_first[i]  = block_number;
-                    /* sync the inodes array and then the disk with inodes array */
-                    inodes[inode_index] = *inode;
-                    disk_write_inode(inodes[inode_index], inode_index);
-
                     /* write the pointers of indir_1 back to disk */
                     disk->ops->write(disk, inode->indir_1, 1, idx_ary_first);
                 }
@@ -1669,7 +1814,8 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
 
         case INDIR_2:
             /* is indir_2 valid? */
-            if ( !(inode->indir_2) || !FD_ISSET(inode->indir_2 - data_start, data_map) )
+            block_number = inode->indir_2;
+            if ( !block_number || !FD_ISSET(block_number - data_start, data_map) )
             {
                 /* allocate a datablock for indir_2 */
                 ret = free_data_block_search( &block_number );
@@ -1691,7 +1837,8 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
             disk->ops->read(disk, block_number, 1, idx_ary_first);
 
             block_number = idx_ary_first[i];
-            if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+
+            if (block_number < data_start || block_number > num_blocks || !FD_ISSET(block_number - data_start, data_map))
             {
                 ret = free_data_block_search( &block_number );
                 if (ret < 0)
@@ -1699,12 +1846,8 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
                 else
                 {
                     idx_ary_first[i]  = block_number;
-                    /* sync the inodes array and then the disk with inodes array */
-                    inodes[inode_index] = *inode;
-                    disk_write_inode(inodes[inode_index], inode_index);
-
                     /* write the pointers of indir_1 back to disk */
-                    disk->ops->write(disk, inode->indir_1, 1, idx_ary_first);
+                    disk->ops->write(disk, inode->indir_2, 1, idx_ary_first);
                 }
             }
 
@@ -1712,7 +1855,8 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
             disk->ops->read(disk, block_number, 1, idx_ary_second);
 
             block_number = idx_ary_second[j];
-            if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+
+            if (block_number < data_start || block_number > num_blocks || !FD_ISSET(block_number - data_start, data_map))
             {
                 ret = free_data_block_search( &block_number );
                 if (ret < 0)
@@ -1720,11 +1864,7 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
                 else
                 {
                     idx_ary_second[j]  = block_number;
-                    /* sync the inodes array and then the disk with inodes array */
-                    inodes[inode_index] = *inode;
-                    disk_write_inode(inodes[inode_index], inode_index);
-
-                    /* write the pointers of indir_1 back to disk */
+                    /* write the pointers of indir_2[i] back to disk */
                     disk->ops->write(disk, idx_ary_first[i], 1, idx_ary_second);
                 }
             }
