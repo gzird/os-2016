@@ -638,6 +638,7 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
             else
                 j = IDX_PER_BLK;
 
+            // TODO: cache the idx_ary_first here
             ret = fetch_inode_data_block(&inode, INDIR_1, i, 0, NULL, false, data);
             if (ret < 0)
                 return ret;
