@@ -1530,7 +1530,7 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
             if (FD_ISSET(block_number - data_start, data_map))
                 disk->ops->read(disk, block_number, 1, data);
             else
-                return -ENOENT;
+                return -EINVAL;
 
             break;
 
@@ -1539,14 +1539,14 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
             if (FD_ISSET(inode->indir_1 - data_start, data_map))
                 disk->ops->read(disk, inode->indir_1, 1, idx_ary_first);
             else
-                return -ENOENT;
+                return -EINVAL;
 
             /* only fetch data if valid */
             block_number = idx_ary_first[i];
             if (FD_ISSET(block_number - data_start, data_map))
                 disk->ops->read(disk, block_number, 1, data);
             else
-                return -ENOENT;
+                return -EINVAL;
 
             break;
 
@@ -1557,7 +1557,7 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
                 if (FD_ISSET(inode->indir_2 - data_start, data_map))
                     disk->ops->read(disk, inode->indir_2, 1, idx_ary_first);
                 else
-                    return -ENOENT;
+                    return -EINVAL;
 
             /* We can fill the columns array in the first call and use it for subsequent calls.
              * That is the purpose of this boolean variable.
@@ -1568,7 +1568,7 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
                 if (FD_ISSET(block_number - data_start, data_map))
                     disk->ops->read(disk, block_number, 1, idx_ary_second);
                 else
-                    return -ENOENT;
+                    return -EINVAL;
             }
 
             /* only fetch data if valid */
@@ -1576,7 +1576,7 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
             if (block_number && FD_ISSET(block_number - data_start, data_map))
                 disk->ops->read(disk, block_number, 1, data);
             else
-                return -ENOENT;
+                return -EINVAL;
 
             break; //for fun
     }
