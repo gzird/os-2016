@@ -344,12 +344,38 @@ static int fs_mkdir(const char *path, mode_t mode)
  */
 static int fs_truncate(const char *path, off_t len)
 {
+    struct path_trans pt;
+    struct fs7600_inode inode;
+    uint32_t block_number, inode_index;
+    int ret;
+
     /* you can cheat by only implementing this for the case of len==0,
      * and an error otherwise.
      */
     if (len != 0)
-	return -EINVAL;		/* invalid argument */
-    return -EOPNOTSUPP;
+        return -EINVAL;		/* invalid argument */
+
+    ret = path_translate(path, &pt);
+    if (ret < 0)
+        return ret;
+
+    inode_index = pt.inode_index;
+    inode       = inodes[inode_index];
+
+    if (!S_ISREG(inode.mode))
+        return -EISDIR;
+
+    for (int i = 0; i < N_DIRECT; i++)
+    {
+        if (inode.direct[i])
+        {
+        }
+    }
+
+    inode.size = 0;
+
+
+    return SUCCESS;
 }
 
 /* unlink - delete a file
