@@ -566,19 +566,19 @@ static int fs_unlink(const char *path)
     bname = basename(pathc);
 
     /* get the parent direrntry */
-    parent_len = strlen(pathc) - strlen(bname);
+    parent_len = strlen(path) - strlen(bname);
     parent = (char *) calloc(parent_len + 1,  sizeof(char));
     if (!parent)
         return -ENOMEM;
 
-    strncpy(parent, pathc, parent_len);
+    strncpy(parent, path, parent_len);
     path_translate(parent, &pt);
 
     struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (sizeof(struct fs7600_dirent), DIRENT_PER_BLK);
     if (!dblock)
         return -ENOMEM;
 
-    /* get the direntry's data block */
+    /* get the parent's direntry data block */
     block_number = inodes[pt.inode_index].direct[0];
     disk->ops->read(disk, block_number, 1, dblock);
 
@@ -593,7 +593,9 @@ static int fs_unlink(const char *path)
         }
     }
 
+    free(dblock);
     free(parent);
+    free(pathc);
 
     if (!found)
         return -EINVAL; //should not happen
@@ -608,7 +610,86 @@ static int fs_unlink(const char *path)
  */
 static int fs_rmdir(const char *path)
 {
-    return -EOPNOTSUPP;
+    struct path_trans pt;
+    uint32_t block_number, parent_len;
+    char *pathc, *bname, *parent;
+    bool found = false;
+    int ret;
+
+    /* find out if path is a dir */
+    ret = path_translate(path, &pt);
+    if (ret < 0)
+        return ret;
+
+    /* only delete files */
+    if (!S_ISDIR(inodes[pt.inode_index].mode))
+        return -ENOTDIR;
+
+    pathc = strdup(path);
+    if (!pathc)
+        return -ENOMEM;
+
+    /* get the basename of the file*/
+    bname = basename(pathc);
+
+    /* get the parent direntry */
+    parent_len = strlen(pathc) - strlen(bname);
+    parent = (char *) calloc(parent_len + 1,  sizeof(char));
+    if (!parent)
+        return -ENOMEM;
+
+    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (sizeof(struct fs7600_dirent), DIRENT_PER_BLK);
+    if (!dblock)
+        return -ENOMEM;
+
+    /* check if the directory is not empty */
+    block_number = inodes[pt.inode_index].direct[0];
+    disk->ops->read(disk, block_number, 1, dblock);
+
+    for (int i = 0; i < DIRENT_PER_BLK; i++)
+    {
+        if (dblock[i].valid)
+        {
+            found = true;
+            break;
+        }
+    }
+
+    if (found)
+    {
+        free(dblock);
+        free(parent);
+        free(pathc);
+        return -ENOTEMPTY;
+    }
+
+    /* look for the directory to delete */
+    strncpy(parent, path, parent_len);
+    path_translate(parent, &pt);
+    block_number = inodes[pt.inode_index].direct[0];
+    disk->ops->read(disk, block_number, 1, dblock);
+    found = false;
+    for (int i = 0; i < DIRENT_PER_BLK; i++)
+    {
+        if (dblock[i].valid && strcmp(bname, dblock[i].name) == 0)
+        {
+            dblock[i].valid = false;
+            found = true;
+            break;
+        }
+    }
+
+    free(dblock);
+    free(parent);
+    free(pathc);
+
+    if (!found)
+        return -EINVAL; //should not happen
+    else
+        disk->ops->write(disk, block_number, 1, dblock);
+
+
+    return SUCCESS;
 }
 
 /* rename - rename a file or directory
