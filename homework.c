@@ -544,7 +544,7 @@ static int fs_unlink(const char *path)
     bool found = false;
     int ret;
 
-    /* first truncate and then remove the directory entry of the file */
+    /* first we truncate and later we remove the directory entry of the file */
     ret = fs_truncate(path, 0);
     if (ret < 0)
         return ret;
