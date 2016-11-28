@@ -1659,9 +1659,9 @@ int path_translate(const char *path, struct path_trans *pt)
             disk->ops->read(disk, block_number, 1, dblock);
         else
         {
-            free(pathc);
             free(dblock);
-            return -ENOENT;
+            free(pathc);
+            return -EINVAL;
         }
 
         /* try to find the entry's inode number for each component of the path */
@@ -1682,13 +1682,12 @@ int path_translate(const char *path, struct path_trans *pt)
 
     if (!found)
     {
-        free(pathc);
         free(dblock);
+        free(pathc);
         return -ENOENT;
     }
 
     pt->inode_index = inode_index;
-    free(pathc);
     free(dblock);
 
     return SUCCESS;
@@ -1831,17 +1830,24 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
     if (strlen(bname) > 27)
     {
         fprintf(stderr, "Maximum file or directory name is 27 characters\n");
+        free(pathc);
         return -EINVAL;
     }
 
-    parent_len = strlen(pathc) - strlen(bname);
+    parent_len = strlen(path) - strlen(bname);
     parent = (char *) calloc(parent_len + 1,  sizeof(char));
+    if (!parent)
+        return -ENOMEM;
 
     /* check if the parent directory exists */
-    strncpy(parent, pathc, parent_len);
+    strncpy(parent, path, parent_len);
     ret = path_translate(parent, &pt);
     if (ret < 0)
         return ret;
+
+    /* parent inode has indeed to be a directory */
+    if (!S_ISDIR(inodes[pt.inode_index].mode))
+        return -EINVAL;
 
     struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (sizeof(struct fs7600_dirent), DIRENT_PER_BLK);
     if (!dblock)
@@ -1853,7 +1859,7 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
      * else fetch the directory's entry block
      */
     found = false;
-    if (block_number == 0 || !FD_ISSET(block_number - data_start, data_map))
+    if (!block_number || !FD_ISSET(block_number - data_start, data_map))
     {
         for (i = 0; i < num_dblocks; i++)
             if (!FD_ISSET(i, data_map))
@@ -1870,7 +1876,7 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
     else
     {
         disk->ops->read(disk, block_number, 1, dblock);
-        found     = true;       /* becomes true if read succeeds */
+        found     = true;       /* becomes true if disk read does not abort/crash as it always succeeds */
         new_block = false;
     }
 
@@ -1963,6 +1969,7 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
     /* sync the disk with memory */
     disk_write_inode(inodes[inode_index], inode_index);
 
+    free(pathc);
     free(parent);
 
     return SUCCESS;
