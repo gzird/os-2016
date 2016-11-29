@@ -574,7 +574,7 @@ static int fs_unlink(const char *path)
     strncpy(parent, path, parent_len);
     path_translate(parent, &pt);
 
-    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (sizeof(struct fs7600_dirent), DIRENT_PER_BLK);
+    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (DIRENT_PER_BLK, sizeof(struct fs7600_dirent));
     if (!dblock)
         return -ENOMEM;
 
@@ -638,7 +638,7 @@ static int fs_rmdir(const char *path)
     if (!parent)
         return -ENOMEM;
 
-    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (sizeof(struct fs7600_dirent), DIRENT_PER_BLK);
+    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (DIRENT_PER_BLK, sizeof(struct fs7600_dirent));
     if (!dblock)
         return -ENOMEM;
 
@@ -1930,7 +1930,7 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
     if (!S_ISDIR(inodes[pt.inode_index].mode))
         return -EINVAL;
 
-    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (sizeof(struct fs7600_dirent), DIRENT_PER_BLK);
+    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (DIRENT_PER_BLK, sizeof(struct fs7600_dirent));
     if (!dblock)
         return -ENOMEM;
 
