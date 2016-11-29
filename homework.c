@@ -569,7 +569,99 @@ static int fs_rmdir(const char *path)
  */
 static int fs_rename(const char *src_path, const char *dst_path)
 {
-    return -EOPNOTSUPP;
+    struct path_trans pt;
+    uint32_t block_number, parent_len, idx;
+    char *pathc, *bname, *parent, *pathc2, *bname2;
+    bool found_src = false, found_dst = false;
+    int i, ret;
+
+    pathc  = strdup(src_path);
+    pathc2 = strdup(dst_path);
+
+    if (!pathc || !pathc2)
+        return -ENOMEM;
+
+    /* get the basenames */
+    bname  = basename(pathc);
+    bname2 = basename(pathc2);
+
+    /* get the parent direrntry */
+    parent_len = strlen(src_path) - strlen(bname);
+    parent = (char *) calloc(parent_len + 1,  sizeof(char));
+    if (!parent)
+        return -ENOMEM;
+
+    strncpy(parent, src_path, parent_len);
+
+    /* Cannot rename the root directory or use more that 27 chars for the new name */
+    if (strcmp(src_path, "/") == 0 || strlen(bname2) > 27)
+        return -EOPNOTSUPP;
+
+    /* Cannot move to another directory */
+    if (strncmp(parent, dst_path, parent_len))
+        return -EINVAL;
+
+    ret = path_translate(parent, &pt);
+    if (ret < 0)
+        return ret;
+
+    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (DIRENT_PER_BLK, sizeof(struct fs7600_dirent));
+    if (!dblock)
+        return -ENOMEM;
+
+    /* get the parent's direntry data block, if valid */
+    block_number = inodes[pt.inode_index].direct[0];
+    if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+        return -ENOENT;
+
+    disk->ops->read(disk, block_number, 1, dblock);
+
+    /* search for src/dst */
+    for (i = 0; i < DIRENT_PER_BLK; i++)
+    {
+        if (dblock[i].valid && FD_ISSET(dblock[i].inode, inode_map))
+        {
+            if (strcmp(bname, dblock[i].name) == 0)
+            {
+                idx = i;
+                found_src = true;
+            }
+
+            if (strcmp(bname2, dblock[i].name) == 0)
+                found_dst = true;
+        }
+    }
+
+    /* source does not exist? */
+    if (!found_src)
+    {
+        free(dblock);
+        free(parent);
+        free(pathc);
+        free(pathc2);
+        return -ENOENT;
+    }
+
+    /* destination exists already? */
+    if (found_dst)
+    {
+        free(dblock);
+        free(parent);
+        free(pathc);
+        free(pathc2);
+        return -EEXIST;
+    }
+
+    /* copy new name, write to disk and free the memory */
+    strcpy(dblock[idx].name, bname2);
+    disk->ops->write(disk, block_number, 1, dblock);
+
+    free(dblock);
+    free(parent);
+    free(pathc);
+    free(pathc2);
+
+    return SUCCESS;
 }
 
 /* chmod - change file permissions
@@ -2152,7 +2244,7 @@ int unlink_rmdir_helper(const char *path, bool isDir)
     if (!pathc)
         return -ENOMEM;
 
-    /* get the basename of the file*/
+    /* get the basename of the file */
     bname = basename(pathc);
 
     /* get the parent direrntry */
