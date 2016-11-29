@@ -36,7 +36,8 @@ int validate_inode_data_block(struct fs7600_inode *, uint32_t,
 int free_data_block_search(uint32_t *);
 int write_data_block(const char *, uint32_t, uint32_t, uint32_t);
 int update_inode_size(struct fs7600_inode *, uint32_t, uint32_t);
-
+int disk_write_bitmaps(bool, bool);
+int unlink_rmdir_helper(const char *, bool);
 
 
 
@@ -258,7 +259,7 @@ static int fs_readdir(const char *path, void *ptr, fuse_fill_dir_t filler,
     /* allocate memory for one data block
      * there is lots of code duplication from path_translate
      */
-    struct fs7600_dirent * dblock = (struct fs7600_dirent *) malloc (FS_BLOCK_SIZE);
+    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (DIRENT_PER_BLK, sizeof(struct fs7600_dirent));
     if (!dblock)
         return -ENOMEM;
 
@@ -274,7 +275,7 @@ static int fs_readdir(const char *path, void *ptr, fuse_fill_dir_t filler,
 
     for (i = 0; i < DIRENT_PER_BLK; i++)
     {
-        if (dblock[i].valid)
+        if (dblock[i].valid && FD_ISSET(dblock[i].inode, inode_map))
         {
             struct stat sb;
             memset(&sb, 0, sizeof(sb));
@@ -528,6 +529,7 @@ static int fs_truncate(const char *path, off_t len)
     inode.size = 0;
     inodes[inode_index] = inode;
     disk_write_inode(inode, inode_index);
+    disk_write_bitmaps(true, true);
 
     return SUCCESS;
 }
@@ -538,71 +540,9 @@ static int fs_truncate(const char *path, off_t len)
  */
 static int fs_unlink(const char *path)
 {
-    struct path_trans pt;
-    uint32_t block_number, parent_len;
-    char *pathc, *bname, *parent;
-    bool found = false;
-    int i, ret;
+    bool isDir = false;
 
-    /* first we truncate and later we remove the directory entry of the file */
-    ret = fs_truncate(path, 0);
-    if (ret < 0)
-        return ret;
-
-    /* find out if path is file */
-    ret = path_translate(path, &pt);
-    if (ret < 0)
-        return ret;
-
-    /* only delete files */
-    if (!S_ISREG(inodes[pt.inode_index].mode))
-        return -EISDIR;
-
-    pathc = strdup(path);
-    if (!pathc)
-        return -ENOMEM;
-
-    /* get the basename of the file*/
-    bname = basename(pathc);
-
-    /* get the parent direrntry */
-    parent_len = strlen(path) - strlen(bname);
-    parent = (char *) calloc(parent_len + 1,  sizeof(char));
-    if (!parent)
-        return -ENOMEM;
-
-    strncpy(parent, path, parent_len);
-    path_translate(parent, &pt);
-
-    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (DIRENT_PER_BLK, sizeof(struct fs7600_dirent));
-    if (!dblock)
-        return -ENOMEM;
-
-    /* get the parent's direntry data block */
-    block_number = inodes[pt.inode_index].direct[0];
-    disk->ops->read(disk, block_number, 1, dblock);
-
-    /* look for the filename to delete */
-    for (i = 0; i < DIRENT_PER_BLK; i++)
-    {
-        if (dblock[i].valid && strcmp(bname, dblock[i].name) == 0)
-        {
-            dblock[i].valid = false;
-            found = true;
-            break;
-        }
-    }
-
-    free(dblock);
-    free(parent);
-    free(pathc);
-
-    if (!found)
-        return -EINVAL; //should not happen
-    else
-        disk->ops->write(disk, block_number, 1, dblock);
-
-    return SUCCESS;
+    return unlink_rmdir_helper(path, isDir);
 }
 
 /* rmdir - remove a directory
@@ -610,86 +550,9 @@ static int fs_unlink(const char *path)
  */
 static int fs_rmdir(const char *path)
 {
-    struct path_trans pt;
-    uint32_t block_number, parent_len;
-    char *pathc, *bname, *parent;
-    bool found = false;
-    int i, ret;
+    bool isDir = true;
 
-    /* find out if path is a dir */
-    ret = path_translate(path, &pt);
-    if (ret < 0)
-        return ret;
-
-    /* only delete directories */
-    if (!S_ISDIR(inodes[pt.inode_index].mode))
-        return -ENOTDIR;
-
-    pathc = strdup(path);
-    if (!pathc)
-        return -ENOMEM;
-
-    /* get the basename of the directory */
-    bname = basename(pathc);
-
-    /* get the parent direntry */
-    parent_len = strlen(pathc) - strlen(bname);
-    parent = (char *) calloc(parent_len + 1,  sizeof(char));
-    if (!parent)
-        return -ENOMEM;
-
-    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (DIRENT_PER_BLK, sizeof(struct fs7600_dirent));
-    if (!dblock)
-        return -ENOMEM;
-
-    /* check if the directory is not empty */
-    block_number = inodes[pt.inode_index].direct[0];
-    disk->ops->read(disk, block_number, 1, dblock);
-
-    for (i = 0; i < DIRENT_PER_BLK; i++)
-    {
-        if (dblock[i].valid)
-        {
-            found = true;
-            break;
-        }
-    }
-
-    if (found)
-    {
-        free(dblock);
-        free(parent);
-        free(pathc);
-        return -ENOTEMPTY;
-    }
-
-    /* look for the directory to delete */
-    strncpy(parent, path, parent_len);
-    path_translate(parent, &pt);
-    block_number = inodes[pt.inode_index].direct[0];
-    disk->ops->read(disk, block_number, 1, dblock);
-    found = false;
-    for (i = 0; i < DIRENT_PER_BLK; i++)
-    {
-        if (dblock[i].valid && strcmp(bname, dblock[i].name) == 0)
-        {
-            dblock[i].valid = false;
-            found = true;
-            break;
-        }
-    }
-
-    free(dblock);
-    free(parent);
-    free(pathc);
-
-    if (!found)
-        return -EINVAL; //should not happen
-    else
-        disk->ops->write(disk, block_number, 1, dblock);
-
-
-    return SUCCESS;
+    return unlink_rmdir_helper(path, isDir);
 }
 
 /* rename - rename a file or directory
@@ -1613,6 +1476,8 @@ static int fs_write(const char *path, const char *buf, size_t len,
             break; //for fun
     } //switch
 
+    disk_write_bitmaps(true, true);
+
     return nbytes;
 }
 
@@ -1749,7 +1614,9 @@ int path_translate(const char *path, struct path_trans *pt)
         found = false;
         for (i = 0; i < DIRENT_PER_BLK; i++)
         {
-            if (dblock[i].valid && strcmp(token, dblock[i].name) == 0)
+            if (dblock[i].valid
+                && strcmp(token, dblock[i].name) == 0
+                && FD_ISSET(dblock[i].inode, inode_map))
             {
                 inode_index  = dblock[i].inode;
                 found = true;
@@ -1920,13 +1787,13 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
     if (!parent)
         return -ENOMEM;
 
-    /* check if the parent directory exists */
+    /* check if the parent path exists */
     strncpy(parent, path, parent_len);
     ret = path_translate(parent, &pt);
     if (ret < 0)
         return ret;
 
-    /* parent inode has indeed to be a directory */
+    /* parent path has indeed to be a directory */
     if (!S_ISDIR(inodes[pt.inode_index].mode))
         return -EINVAL;
 
@@ -1940,12 +1807,12 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
      * and assign it, else fetch the directory's entry block
      */
     found = false;
-    if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+    if (block_number == 0 || block_number > num_blocks || !FD_ISSET(block_number - data_start, data_map))
     {
         for (i = 0; i < num_dblocks; i++)
             if (!FD_ISSET(i, data_map))
             {
-                block_number = i;
+                block_number = i + data_start;
                 found        = true;
                 new_block    = true;
                 idx_free     = 0;
@@ -1969,9 +1836,10 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
     {
         /* search the directory entries for free space or the same file/dir */
         found = false;
+//        for (i = DIRENT_PER_BLK - 1; i > -1; i--)
         for (i = 0; i < DIRENT_PER_BLK; i++)
         {
-            if (dblock[i].valid)
+            if (dblock[i].valid && FD_ISSET(dblock[i].inode, inode_map))
             {
                 /* count the valid entries */
                 entry_count++;
@@ -2013,6 +1881,10 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
      if (!found)
          return -ENOSPC;
 
+    /* Do we have the right type of mode? */
+    if ( (isDir && S_ISREG(mode)) || (!isDir && S_ISDIR(mode)) )
+        return -EINVAL;
+
     /* set the parent's directory entry */
     dblock[idx_free].valid = 1;
     dblock[idx_free].isDir = isDir;
@@ -2021,10 +1893,6 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
 
     /* write the updated direntry block back to disk */
     disk->ops->write(disk, block_number, 1, dblock);
-
-    /* Do we have the right type of mode? */
-    if ( (isDir && S_ISREG(mode)) || (!isDir && S_ISDIR(mode)) )
-        return -EINVAL;
 
     inode.uid   = getuid();
     inode.gid   = getgid();
@@ -2049,6 +1917,7 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
 
     /* sync the disk with memory */
     disk_write_inode(inodes[inode_index], inode_index);
+    disk_write_bitmaps(true, true);
 
     free(pathc);
     free(parent);
@@ -2250,19 +2119,149 @@ int update_inode_size(struct fs7600_inode * inode, uint32_t inode_index, uint32_
 }
 
 /*
- * Write inode, data blocks to disk
+ * Write inode and data bitmaps to disk
  */
 int disk_write_bitmaps(bool write_inode, bool write_data)
 {
     if (write_inode)
     {
-        disk->ops->read(disk, inode_map_start, data_map_start - inode_map_start, inode_map);
+        disk->ops->write(disk, inode_map_start, data_map_start - inode_map_start, inode_map);
     }
 
     if (write_data)
     {
-        disk->ops->read(disk, data_map_start, inode_start - data_map_start, data_map);
+        disk->ops->write(disk, data_map_start, inode_start - data_map_start, data_map);
     }
 
    return SUCCESS;
 }
+
+int unlink_rmdir_helper(const char *path, bool isDir)
+{
+    struct path_trans pt;
+    uint32_t block_number, parent_len, inode_index, parent_block_number;
+    char *pathc, *bname, *parent;
+    bool found = false;
+    int i, ret;
+
+    /* Cannot delete the root directory */
+    if (strcmp(path, "/") == 0 && isDir)
+        return -EOPNOTSUPP;
+
+    pathc = strdup(path);
+    if (!pathc)
+        return -ENOMEM;
+
+    /* get the basename of the file*/
+    bname = basename(pathc);
+
+    /* get the parent direrntry */
+    parent_len = strlen(path) - strlen(bname);
+    parent = (char *) calloc(parent_len + 1,  sizeof(char));
+    if (!parent)
+        return -ENOMEM;
+
+    strncpy(parent, path, parent_len);
+    ret = path_translate(parent, &pt);
+    if (ret < 0)
+        return ret;
+
+    if (!S_ISDIR(inodes[pt.inode_index].mode))
+        return -ENOENT;
+
+    struct fs7600_dirent * dblock = (struct fs7600_dirent *) calloc (DIRENT_PER_BLK, sizeof(struct fs7600_dirent));
+    if (!dblock)
+        return -ENOMEM;
+
+    /* get the parent's direntry data block, if valid */
+    block_number = inodes[pt.inode_index].direct[0];
+    if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+        return -ENOENT;
+
+    disk->ops->read(disk, block_number, 1, dblock);
+    parent_block_number = block_number;
+
+    /* look for the filename/dir to delete */
+    for (i = 0; i < DIRENT_PER_BLK; i++)
+    {
+        if (dblock[i].valid
+            && strcmp(bname, dblock[i].name) == 0
+            && FD_ISSET(dblock[i].inode, inode_map))
+        {
+            /* is it a dir when deleting a file? */
+            if (!isDir && dblock[i].isDir)
+            {
+                free(dblock);
+                return -EISDIR;
+            }
+
+            /* is it a file when deleting a dir? */
+            if (isDir && !(dblock[i].isDir))
+            {
+                free(dblock);
+                return -ENOTDIR;
+            }
+
+            dblock[i].valid = false;
+            inode_index = dblock[i].inode;
+            found = true;
+            break;
+        }
+    }
+
+    free(parent);
+    free(pathc);
+
+    if (!found)
+    {
+        free(dblock);
+        return -ENOENT;
+    }
+    else
+    {
+        if (isDir)
+        {
+            block_number = inodes[inode_index].direct[0];
+            /* check if the block is valid */
+            if (block_number && block_number < num_blocks && FD_ISSET(block_number - data_start, data_map))
+            {
+                struct fs7600_dirent * dir_dblock = (struct fs7600_dirent *) calloc (DIRENT_PER_BLK, sizeof(struct fs7600_dirent));
+                if (!dir_dblock)
+                    return -ENOMEM;
+
+                /* now read a valid block */
+                disk->ops->read(disk, block_number, 1, dir_dblock);
+                for (i = 0; i < DIRENT_PER_BLK; i++)
+                {
+                    /* directory is not empty, so don't write anything to disk */
+                    if (dir_dblock[i].valid && FD_ISSET(dir_dblock[i].inode, inode_map))
+                    {
+                        free(dblock);
+                        free(dir_dblock);
+                        return -ENOTEMPTY;
+                    }
+                }
+            }
+        }
+        else
+        {
+            /* truncate the file */
+            ret = fs_truncate(path, 0);
+            if (ret < 0)
+            {
+                free(dblock);
+                return ret;
+            }
+        }
+
+        /* clear the inode, write the direntry block */
+        FD_CLR(inode_index, inode_map);
+        disk->ops->write(disk, parent_block_number, 1, dblock);
+        disk_write_bitmaps(true, true);
+    }
+
+    free(dblock);
+
+    return SUCCESS;
+}
+
