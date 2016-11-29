@@ -1910,8 +1910,8 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
     bname = basename(pathc);
     if (strlen(bname) > 27)
     {
-        fprintf(stderr, "Maximum file or directory name is 27 characters\n");
         free(pathc);
+        fprintf(stderr, "Maximum file or directory name is 27 characters\n");
         return -EINVAL;
     }
 
@@ -1936,8 +1936,8 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
 
     block_number = inodes[pt.inode_index].direct[0];
 
-    /* if directory is empty, find the next available data block and assign it
-     * else fetch the directory's entry block
+    /* if parent directory is empty, find the next available data block
+     * and assign it, else fetch the directory's entry block
      */
     found = false;
     if (!block_number || !FD_ISSET(block_number - data_start, data_map))
