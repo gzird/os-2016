@@ -621,7 +621,7 @@ static int fs_rmdir(const char *path)
     if (ret < 0)
         return ret;
 
-    /* only delete files */
+    /* only delete directories */
     if (!S_ISDIR(inodes[pt.inode_index].mode))
         return -ENOTDIR;
 
@@ -629,7 +629,7 @@ static int fs_rmdir(const char *path)
     if (!pathc)
         return -ENOMEM;
 
-    /* get the basename of the file*/
+    /* get the basename of the directory */
     bname = basename(pathc);
 
     /* get the parent direntry */
@@ -2249,3 +2249,20 @@ int update_inode_size(struct fs7600_inode * inode, uint32_t inode_index, uint32_
     return SUCCESS;
 }
 
+/*
+ * Write inode, data blocks to disk
+ */
+int disk_write_bitmaps(bool write_inode, bool write_data)
+{
+    if (write_inode)
+    {
+        disk->ops->read(disk, inode_map_start, data_map_start - inode_map_start, inode_map);
+    }
+
+    if (write_data)
+    {
+        disk->ops->read(disk, data_map_start, inode_start - data_map_start, data_map);
+    }
+
+   return SUCCESS;
+}
