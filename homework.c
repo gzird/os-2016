@@ -542,7 +542,7 @@ static int fs_unlink(const char *path)
     uint32_t block_number, parent_len;
     char *pathc, *bname, *parent;
     bool found = false;
-    int ret;
+    int i, ret;
 
     /* first we truncate and later we remove the directory entry of the file */
     ret = fs_truncate(path, 0);
@@ -583,7 +583,7 @@ static int fs_unlink(const char *path)
     disk->ops->read(disk, block_number, 1, dblock);
 
     /* look for the filename to delete */
-    for (int i = 0; i < DIRENT_PER_BLK; i++)
+    for (i = 0; i < DIRENT_PER_BLK; i++)
     {
         if (dblock[i].valid && strcmp(bname, dblock[i].name) == 0)
         {
@@ -614,7 +614,7 @@ static int fs_rmdir(const char *path)
     uint32_t block_number, parent_len;
     char *pathc, *bname, *parent;
     bool found = false;
-    int ret;
+    int i, ret;
 
     /* find out if path is a dir */
     ret = path_translate(path, &pt);
@@ -646,7 +646,7 @@ static int fs_rmdir(const char *path)
     block_number = inodes[pt.inode_index].direct[0];
     disk->ops->read(disk, block_number, 1, dblock);
 
-    for (int i = 0; i < DIRENT_PER_BLK; i++)
+    for (i = 0; i < DIRENT_PER_BLK; i++)
     {
         if (dblock[i].valid)
         {
@@ -669,7 +669,7 @@ static int fs_rmdir(const char *path)
     block_number = inodes[pt.inode_index].direct[0];
     disk->ops->read(disk, block_number, 1, dblock);
     found = false;
-    for (int i = 0; i < DIRENT_PER_BLK; i++)
+    for (i = 0; i < DIRENT_PER_BLK; i++)
     {
         if (dblock[i].valid && strcmp(bname, dblock[i].name) == 0)
         {
@@ -1900,7 +1900,7 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
     char *pathc, *bname, *parent;
     uint32_t i, idx_free, parent_len, block_number, inode_index, entry_count = 0;
     bool found, new_block;
-    int ret;
+    int j, ret;
 
     pathc = strdup(path);
     if (!pathc)
@@ -2038,7 +2038,7 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
     inode.size  = 0;
 
     /* don't use any space for empty dir or empty file */
-    for (int j = 0; j < N_DIRECT; j++)
+    for (j = 0; j < N_DIRECT; j++)
         inode.direct[j] = 0;
 
     inode.indir_1 = 0;
@@ -2203,7 +2203,9 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
 /* Find the next available data block, if any */
 int free_data_block_search(uint32_t * block_number)
 {
-    for (uint32_t i = 0; i < num_dblocks; i++)
+    uint32_t i;
+
+    for (i = 0; i < num_dblocks; i++)
         if (!FD_ISSET(i, data_map))
         {
             FD_SET(i, data_map);
