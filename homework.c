@@ -1742,7 +1742,7 @@ int path_translate(const char *path, struct path_trans *pt)
         {
             free(dblock);
             free(pathc);
-            return -EINVAL;
+            return -ENOENT;
         }
 
         /* try to find the entry's inode number for each component of the path */
