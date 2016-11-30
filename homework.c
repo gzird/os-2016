@@ -1651,7 +1651,7 @@ int path_translate(const char *path, struct path_trans *pt)
     uint32_t i, block_number, inode_index;
     const char * delimiter = "/";
     char *pathc, *token;
-    bool found;
+    bool found = false;
 
     if (path == NULL || strlen(path) == 0)
     {
