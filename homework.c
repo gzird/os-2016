@@ -135,6 +135,10 @@ void* fs_init(struct fuse_conn_info *conn)
         exit(1);
     }
 
+    /* zero out the bitmaps */
+    FD_ZERO(inode_map);
+    FD_ZERO(data_map);
+
     /*  read bitmaps and inodes into memory */
     data_map_start = inode_map_start + sb.inode_map_sz;
     inode_start    = data_map_start  + sb.block_map_sz;
@@ -2038,7 +2042,7 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
     {
         case DIRECT:
             block_number = inode->direct[i];
-            if (!block_number || !FD_ISSET(block_number - data_start, data_map))
+            if (block_number == 0 || block_number > num_blocks || !FD_ISSET(block_number - data_start, data_map))
             {
                 ret = free_data_block_search( &block_number );
                 if (ret < 0)
@@ -2058,7 +2062,7 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
         case INDIR_1:
             block_number = inode->indir_1;
             /* is indir_1 valid? */
-            if ( !block_number || !FD_ISSET(block_number - data_start, data_map) )
+            if (block_number == 0 || block_number > num_blocks || !FD_ISSET(block_number - data_start, data_map))
             {
                 /* allocate a datablock for indir_1 */
                 ret = free_data_block_search( &block_number );
@@ -2100,7 +2104,7 @@ int validate_inode_data_block(struct fs7600_inode * inode, uint32_t inode_index,
         case INDIR_2:
             /* is indir_2 valid? */
             block_number = inode->indir_2;
-            if ( !block_number || !FD_ISSET(block_number - data_start, data_map) )
+            if (block_number == 0 || block_number > num_blocks || !FD_ISSET(block_number - data_start, data_map))
             {
                 /* allocate a datablock for indir_2 */
                 ret = free_data_block_search( &block_number );
@@ -2167,6 +2171,7 @@ int free_data_block_search(uint32_t * block_number)
     uint32_t i;
 
     for (i = 0; i < num_dblocks; i++)
+    {
         if (!FD_ISSET(i, data_map))
         {
             FD_SET(i, data_map);
@@ -2174,6 +2179,7 @@ int free_data_block_search(uint32_t * block_number)
 
             return SUCCESS;
         }
+    }
 
     return -ENOSPC;
 }
