@@ -561,7 +561,7 @@ static int fs_truncate(const char *path, off_t len)
     inode.size = 0;
     inodes[inode_index] = inode;
     disk_write_inode(inode, inode_index);
-    disk_write_bitmaps(true, true);
+    disk_write_bitmaps(false, true);
 
     return SUCCESS;
 }
@@ -1367,7 +1367,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
                 /* write the data from pos_start to pos_final */
                 n = pos_final - pos_start + 1;
                 write_data_block(buf+nbytes, block_number, pos_start, n);
-                update_inode_size(&inode, inode_index, n);
                 nbytes = n;
                 break;
             }
@@ -1375,7 +1374,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
             /* write to dblock, update inode size, flush updated inode and dblock to disk */
             n = FS_BLOCK_SIZE - pos_start;
             write_data_block(buf+nbytes, block_number, 0, n);
-            update_inode_size(&inode, inode_index, n);
             nbytes += n;
 
             /* we immediately move to the next block, i.e. ++i, after the memcpy above */
@@ -1387,7 +1385,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
                 n = FS_BLOCK_SIZE;
                 write_data_block(buf+nbytes, block_number, 0, n);
-                update_inode_size(&inode, inode_index, n);
                 nbytes += n;
             }
 
@@ -1400,7 +1397,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
                 n = pos_final + 1;
                 write_data_block(buf+nbytes, block_number, 0, n);
-                update_inode_size(&inode, inode_index, n);
                 nbytes += n;
                 break;
             }
@@ -1441,14 +1437,12 @@ static int fs_write(const char *path, const char *buf, size_t len,
                 {
                     n = pos_final - pos_start + 1;
                     write_data_block(buf+nbytes, block_number, pos_start, n);
-                    update_inode_size(&inode, inode_index, n);
                     nbytes += n;
                 }
                 else
                 {
                     n = pos_final + 1;
                     write_data_block(buf+nbytes, block_number, 0, n);
-                    update_inode_size(&inode, inode_index, n);
                     nbytes += n;
                 }
 
@@ -1458,7 +1452,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
             /* write to dblock, update inode size, flush updated inode and dblock to disk */
             n = FS_BLOCK_SIZE - pos_start;
             write_data_block(buf+nbytes, block_number, 0, n);
-            update_inode_size(&inode, inode_index, n);
             nbytes += n;
 
             /* the rest of the logic is the same as in the DIRECT case. */
@@ -1472,7 +1465,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
                 n = FS_BLOCK_SIZE;
                 write_data_block(buf+nbytes, block_number, 0, n);
-                update_inode_size(&inode, inode_index, n);
                 nbytes += n;
             }
 
@@ -1485,7 +1477,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
                 n = pos_final + 1;
                 write_data_block(buf+nbytes, block_number, 0, n);
-                update_inode_size(&inode, inode_index, n);
                 nbytes += n;
 
                 break;
@@ -1530,14 +1521,12 @@ static int fs_write(const char *path, const char *buf, size_t len,
                     {
                         n = pos_final - pos_start + 1;
                         write_data_block(buf+nbytes, block_number, pos_start, n);
-                        update_inode_size(&inode, inode_index, n);
                         nbytes += n;
                     }
                     else
                     {
                         n = pos_final + 1;
                         write_data_block(buf+nbytes, block_number, 0, n);
-                        update_inode_size(&inode, inode_index, n);
                         nbytes += n;
                     }
                 }
@@ -1554,7 +1543,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
                         n = FS_BLOCK_SIZE;
                         write_data_block(buf+nbytes, block_number, 0, n);
-                        update_inode_size(&inode, inode_index, n);
                         nbytes += n;
                     } //for
 
@@ -1564,7 +1552,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
                     n = pos_final + 1;
                     write_data_block(buf+nbytes, block_number, 0, n);
-                    update_inode_size(&inode, inode_index, n);
                     nbytes += n;
                 }
 
@@ -1574,7 +1561,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
             /* it is the case that i < i2 so we write the remaining parts of that row */
             n = FS_BLOCK_SIZE - pos_start;
             write_data_block(buf+nbytes, block_number, pos_start, n);
-            update_inode_size(&inode, inode_index, n);
             nbytes += n;
 
 
@@ -1586,7 +1572,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
                 n = FS_BLOCK_SIZE;
                 write_data_block(buf+nbytes, block_number, 0, n);
-                update_inode_size(&inode, inode_index, n);
                 nbytes += n;
             }//for k
 
@@ -1607,7 +1592,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
                     n = FS_BLOCK_SIZE;
                     write_data_block(buf+nbytes, block_number, 0, n);
-                    update_inode_size(&inode, inode_index, n);
                     nbytes += n;
                 }//for
             } //while
@@ -1626,7 +1610,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
                 n = FS_BLOCK_SIZE;
                 write_data_block(buf+nbytes, block_number, 0, n);
-                update_inode_size(&inode, inode_index, n);
                 nbytes += n;
             }//for
 
@@ -1637,13 +1620,13 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
             n = pos_final + 1;
             write_data_block(buf+nbytes, block_number, 0, n);
-            update_inode_size(&inode, inode_index, n);
             nbytes += n;
 
             break; //for fun
     } //switch
 
-    disk_write_bitmaps(true, true);
+    update_inode_size(&inode, inode_index, nbytes);
+    disk_write_bitmaps(false, true);
 
     return nbytes;
 }
@@ -2117,7 +2100,13 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
 
     /* sync the disk with memory */
     disk_write_inode(inodes[inode_index], inode_index);
-    disk_write_bitmaps(true, true);
+
+    /* only a new block changes the data bitmap */
+    if (new_block)
+        disk_write_bitmaps(true, true);
+    else
+        disk_write_bitmaps(true, false);
+
 
     free(dblock);
     free(parent);
@@ -2463,7 +2452,7 @@ int unlink_rmdir_helper(const char *path, bool isDir)
         /* clear the inode, write the direntry block */
         FD_CLR(inode_index, inode_map);
         disk->ops->write(disk, parent_block_number, 1, dblock);
-        disk_write_bitmaps(true, true);
+        disk_write_bitmaps(true, false);
     }
 
     free(dblock);
