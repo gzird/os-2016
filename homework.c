@@ -1273,7 +1273,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
     * from the next level. I.e. we just from direct to indir_1 and from indir_1 to indir_2.
     * We assume that a file is stored sequentially in the sense that we start to fill
     * sequentially indir_1 after we have sequentially filled direct, and the same for indir_2.
-    *
     */
     switch(level)
     {
