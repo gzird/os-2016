@@ -2284,7 +2284,7 @@ int free_data_block_search(uint32_t * block_number)
 }
 
 /* Write data to a dblock.
- * We load its data
+ * We load its data, if necessary
  * We change the data
  * We write the new data back to the disk
  */
@@ -2292,7 +2292,11 @@ int write_data_block(const char * buf, uint32_t block_number, uint32_t pos_start
 {
     char data[FS_BLOCK_SIZE];
 
-    disk->ops->read(disk, block_number, 1, data);
+    /* When n = FS_BLOCK_SIZE, we are overwriting the block
+     * so there is no need to read the block's data.
+     */
+    if (n < FS_BLOCK_SIZE || pos_start > 0)             /* actually one check implies the other... */
+        disk->ops->read(disk, block_number, 1, data);
 
     memcpy(&data[pos_start], buf, n);
 
