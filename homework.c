@@ -23,7 +23,7 @@
 #include "blkdev.h"
 
 /* prototypes */
-int path_translate(const char *, struct path_trans *);
+int path_translate(const char *, struct path_trans *, struct fuse_file_info *);
 void inode_to_stat(struct fs7600_inode *, uint32_t , struct stat *);
 int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32_t i,
                            uint32_t j, uint32_t * idx_ary_second, bool fill_ary_second,
@@ -213,7 +213,7 @@ static int fs_getattr(const char *path, struct stat *sb)
     uint32_t inode_index;
     int ret;
 
-    ret = path_translate(path, &pt);
+    ret = path_translate(path, &pt, NULL);
     if (ret < 0)
         return ret;
 
@@ -246,9 +246,23 @@ static int fs_readdir(const char *path, void *ptr, fuse_fill_dir_t filler,
     uint32_t i, inode_index, block_number;
     int ret;
 
-    ret = path_translate(path, &pt);
-    if (ret < 0)
-        return ret;
+
+    /* part 2 caching */
+    if (homework_part > 1)
+    {
+        ret = fi->flags;
+        if (ret < 0)
+            return ret;
+
+        pt.inode_index = (uint32_t) fi->fh;
+    }
+    else
+    {
+        /* part 1 */
+        ret = path_translate(path, &pt, NULL);
+        if (ret < 0)
+            return ret;
+    }
 
     /* we check the validity of the inode and if the path is a directory.
      * we separate the if checks that results in more CPU cycles in order to return the correct error message.
@@ -302,6 +316,20 @@ static int fs_readdir(const char *path, void *ptr, fuse_fill_dir_t filler,
  */
 static int fs_opendir(const char *path, struct fuse_file_info *fi)
 {
+
+    if (homework_part > 1)
+    {
+        struct path_trans pt;
+        int ret;
+
+        fi->fh = 0;
+
+        ret = path_translate(path, &pt, fi);
+
+        fi->fh    = (uint64_t) pt.inode_index;
+        fi->flags = ret;                        /* abuse the flags */
+    }
+
     return 0;
 }
 
@@ -366,7 +394,7 @@ static int fs_truncate(const char *path, off_t len)
     if (len != 0)
         return -EINVAL;		/* invalid argument */
 
-    ret = path_translate(path, &pt);
+    ret = path_translate(path, &pt, NULL);
     if (ret < 0)
         return ret;
 
@@ -605,7 +633,7 @@ static int fs_rename(const char *src_path, const char *dst_path)
     if (strncmp(parent, dst_path, parent_len))
         return -EINVAL;
 
-    ret = path_translate(parent, &pt);
+    ret = path_translate(parent, &pt, NULL);
     if (ret < 0)
         return ret;
 
@@ -680,7 +708,7 @@ static int fs_chmod(const char *path, mode_t mode)
     uint32_t inode_index;
     int ret;
 
-    ret = path_translate(path, &pt);
+    ret = path_translate(path, &pt, NULL);
     if (ret < 0)
         return ret;
 
@@ -701,7 +729,7 @@ int fs_utime(const char *path, struct utimbuf *ut)
     uint32_t inode_index;
     int ret;
 
-    ret = path_translate(path, &pt);
+    ret = path_translate(path, &pt, NULL);
     if (ret < 0)
         return ret;
 
@@ -757,9 +785,22 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
         return -EOPNOTSUPP;
     }
 
-    ret = path_translate(path, &pt);
-    if (ret < 0)
-        return ret;
+    /* part 2 caching */
+    if (homework_part > 1)
+    {
+        ret = fi->flags;
+        if (ret < 0)
+            return ret;
+
+        pt.inode_index = (uint32_t) fi->fh;
+    }
+    else
+    {
+        /* part 1 */
+        ret = path_translate(path, &pt, NULL);
+        if (ret < 0)
+            return ret;
+    }
 
     inode = inodes[pt.inode_index];
     size  = inode.size;
@@ -1154,22 +1195,53 @@ static int fs_write(const char *path, const char *buf, size_t len,
     bool start_in_indir1, start_in_indir2;
     bool stay_in_direct, stay_in_indir1;
 
-    ret = path_translate(path, &pt);
-    if (ret < 0)
+
+    if (homework_part > 1)
     {
-        /* if file does not exist create it, otherwise something else went wrong */
-        if (ret == -ENOENT)
+        ret = fi->flags;
+        pt.inode_index = fi->fh;
+        if (ret < 0)
         {
-            mode_t mode = 01644 | S_IFREG;
-            ret2 = fs_mknod(path, mode, 0);
-            if (ret2 < 0)
-                return ret2;
+            /* if file does not exist create it, otherwise something else went wrong */
+            if (ret == -ENOENT)
+            {
+                mode_t mode = 01644 | S_IFREG;
+                ret2 = fs_mknod(path, mode, 0);
+                if (ret2 < 0)
+                    return ret2;
+                else
+                {
+                    path_translate(path, &pt, NULL);  /* get the inode_index of the newly created file */
+                    fi->fh = pt.inode_index;          /* cache the inode of the new file */
+                }
+            }
             else
-                path_translate(path, &pt);  /* get the inode_index of the newly created file */
+            {
+                return ret;
+            }
         }
-        else
+
+    }
+    else
+    {
+        /* part 1 */
+        ret = path_translate(path, &pt, NULL);
+        if (ret < 0)
         {
-            return ret;
+            /* if file does not exist create it, otherwise something else went wrong */
+            if (ret == -ENOENT)
+            {
+                mode_t mode = 01644 | S_IFREG;
+                ret2 = fs_mknod(path, mode, 0);
+                if (ret2 < 0)
+                    return ret2;
+                else
+                    path_translate(path, &pt, NULL);  /* get the inode_index of the newly created file */
+            }
+            else
+            {
+                return ret;
+            }
         }
     }
 
@@ -1578,6 +1650,19 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
 static int fs_open(const char *path, struct fuse_file_info *fi)
 {
+    if (homework_part > 1)
+    {
+        struct path_trans pt;
+        int ret;
+
+        fi->fh = 0;
+
+        ret = path_translate(path, &pt, fi);
+
+        fi->fh    = (uint64_t) pt.inode_index;
+        fi->flags = ret;                        /* abuse the flags */
+    }
+
     return 0;
 }
 
@@ -1657,7 +1742,7 @@ struct fuse_operations fs_ops = {
  * that is within the struct path_trans.
  */
 
-int path_translate(const char *path, struct path_trans *pt)
+int path_translate(const char *path, struct path_trans *pt, struct fuse_file_info *fi)
 {
     uint32_t i, block_number, inode_index;
     const char * delimiter = "/";
@@ -1667,6 +1752,16 @@ int path_translate(const char *path, struct path_trans *pt)
     if (path == NULL || strlen(path) == 0)
     {
         return -EOPNOTSUPP;
+    }
+
+    /* If fi != NULL means that the call is from open, opendir, read, readdir, write.
+     * If also fh != 0 then the call is from read, readdir, write. i.e. we have already
+     * cached the inode.
+     */
+    if (homework_part > 1 && fi != NULL && fi->fh)
+    {
+        pt->inode_index = fi->fh;
+        return SUCCESS;
     }
 
     /* if path is the rootdir then return its inode num */
@@ -1894,7 +1989,7 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
 
     /* check if the parent path exists */
     strncpy(parent, path, parent_len);
-    ret = path_translate(parent, &pt);
+    ret = path_translate(parent, &pt, NULL);
     if (ret < 0)
         return ret;
 
@@ -2270,7 +2365,7 @@ int unlink_rmdir_helper(const char *path, bool isDir)
         return -ENOMEM;
 
     strncpy(parent, path, parent_len);
-    ret = path_translate(parent, &pt);
+    ret = path_translate(parent, &pt, NULL);
     if (ret < 0)
         return ret;
 
