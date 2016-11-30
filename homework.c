@@ -1602,10 +1602,18 @@ static int fs_statfs(const char *path, struct statvfs *st)
      * this should work fine, but you may want to add code to
      * calculate the correct values later.
      */
+
+    uint32_t i, c = 0;
+
+    for (i = 0; i < num_dblocks; i++)
+        if (!FD_ISSET(i, data_map))
+                c++;
+
+
     st->f_bsize = FS_BLOCK_SIZE;
-    st->f_blocks = 0;           /* probably want to */
-    st->f_bfree = 0;            /* change these */
-    st->f_bavail = 0;           /* values */
+    st->f_blocks = num_dblocks;           /* probably want to */
+    st->f_bfree = c;            /* change these */
+    st->f_bavail = c;           /* values */
     st->f_namemax = 27;
 
     return 0;
@@ -1731,6 +1739,8 @@ int path_translate(const char *path, struct path_trans *pt)
     }
 
     pt->inode_index = inode_index;
+
+    free(pathc);
     free(dblock);
 
     return SUCCESS;
@@ -2014,8 +2024,9 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
     disk_write_inode(inodes[inode_index], inode_index);
     disk_write_bitmaps(true, true);
 
-    free(pathc);
+    free(dblock);
     free(parent);
+    free(pathc);
 
     return SUCCESS;
 }
@@ -2335,9 +2346,12 @@ int unlink_rmdir_helper(const char *path, bool isDir)
                     {
                         free(dblock);
                         free(dir_dblock);
+
                         return -ENOTEMPTY;
                     }
                 }
+
+                free(dir_dblock);
             }
         }
         else
