@@ -2,8 +2,14 @@ Basic Testing
 =============
 This documents describes a couple of tests apart from the ones posted on piazza.
 
-Max filesize test
------------------
+# Table of Contents
+1. [Max filesize test]
+    1. [Using dd]
+    2. [Using a for loop and echo]
+
+
+## Max filesize test
+
 Based on the the blocksize and size of variables used in the structs,
 the maximum file size is (6 + 256 + 256^2) x 1024 = 67377152 bytes.
 We first create a image large enough to hold such a file:
@@ -20,8 +26,8 @@ unlink rootfs/file.max
 yes A | dd bs=1024 count=65798 of=rootfs/file.max
 ```
 
-### Using a for loop and echo
-We write a byte per loop iteration. This takes some time.
+### Using for loop and echo
+We write a byte per loop iteration. This takes quite some time.
 
 ```
 unlink rootfs/file.max
