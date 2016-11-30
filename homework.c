@@ -1625,6 +1625,11 @@ static int fs_write(const char *path, const char *buf, size_t len,
             break; //for fun
     } //switch
 
+    /* It is ok to update the inode size here, i.e. after the all writes happen,
+     * because we also update the data bitmap here, hence if something
+     * goes wrong before we reach here, on the next boot those data blocks
+     * will be free.
+     */
     update_inode_size(&inode, inode_index, nbytes);
     disk_write_bitmaps(false, true);
 
