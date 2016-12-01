@@ -1883,51 +1883,54 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
             break;
 
         case INDIR_1:
-            if (fill_ary_first)
+            switch (fill_ary_first)
             {
-                /* is indir_1 valid? */
-                if (FD_ISSET(inode->indir_1 - data_start, data_map))
-                    disk->ops->read(disk, inode->indir_1, 1, idx_ary_first);
-                else
-                    return -EINVAL;
-            }
+                case true:
+                    /* is indir_1 valid? */
+                    if (FD_ISSET(inode->indir_1 - data_start, data_map))
+                        disk->ops->read(disk, inode->indir_1, 1, idx_ary_first);
+                    else
+                        return -EINVAL;
 
-            /* only fetch data if valid */
-            block_number = idx_ary_first[i];
-            if (FD_ISSET(block_number - data_start, data_map))
-                disk->ops->read(disk, block_number, 1, data);
-            else
-                return -EINVAL;
+                default:
+                    /* only fetch data if valid */
+                    block_number = idx_ary_first[i];
+                    if (FD_ISSET(block_number - data_start, data_map))
+                        disk->ops->read(disk, block_number, 1, data);
+                    else
+                        return -EINVAL;
+            }
 
             break;
 
         case INDIR_2:
-            if (fill_ary_second)
+            switch (fill_ary_second)
             {
-                /* is indir_2 valid? (1st level of indices) */
-                if (FD_ISSET(inode->indir_2 - data_start, data_map))
-                    disk->ops->read(disk, inode->indir_2, 1, idx_ary_first);
-                else
-                    return -EINVAL;
+                /* We can fill the columns array in the first call and use it for subsequent calls.
+                * That is the purpose of this boolean variable.
+                */
+                case true:
+                    /* is indir_2 valid? (1st level of indices) */
+                    if (FD_ISSET(inode->indir_2 - data_start, data_map))
+                        disk->ops->read(disk, inode->indir_2, 1, idx_ary_first);
+                    else
+                        return -EINVAL;
 
-            /* We can fill the columns array in the first call and use it for subsequent calls.
-             * That is the purpose of this boolean variable.
-             */
+                    /* is indir_2[i] valid? (2nd level of indices) */
+                    block_number = idx_ary_first[i];
+                    if (FD_ISSET(block_number - data_start, data_map))
+                        disk->ops->read(disk, block_number, 1, idx_ary_second);
+                    else
+                        return -EINVAL;
 
-                /* is indir_2[i] valid? (2nd level of indices) */
-                block_number = idx_ary_first[i];
-                if (FD_ISSET(block_number - data_start, data_map))
-                    disk->ops->read(disk, block_number, 1, idx_ary_second);
-                else
-                    return -EINVAL;
+                default:
+                    /* only fetch data if valid */
+                    block_number = idx_ary_second[j];
+                    if (block_number && FD_ISSET(block_number - data_start, data_map))
+                        disk->ops->read(disk, block_number, 1, data);
+                    else
+                        return -EINVAL;
             }
-
-            /* only fetch data if valid */
-            block_number = idx_ary_second[j];
-            if (block_number && FD_ISSET(block_number - data_start, data_map))
-                disk->ops->read(disk, block_number, 1, data);
-            else
-                return -EINVAL;
 
             break; //for fun
     }
