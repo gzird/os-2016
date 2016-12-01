@@ -2559,7 +2559,6 @@ void dcache_remove(uint32_t src, char * name)
             && dcache[i].valid)
         {
             dcache[i].valid = false;
-            dcache[i].tm    = 0;
             dcache_count--;
 
             break;
