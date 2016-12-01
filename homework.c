@@ -1109,14 +1109,17 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
 
             while (++i < i2)
             {
-                /* Load next row, from column 0 and fill idx_ary_second
+                /* Load next row, from column 0 (k = 0) and fill idx_ary_second
                 * We fill idx_ary_second when changing i in INDIR_2.
                 */
-                ret = fetch_inode_data_block(&inode, INDIR_2, i, 0, idx_ary_second, true, data);
+                ret = fetch_inode_data_block(&inode, INDIR_2, i, 0, idx_ary_second, true, data);        /* k = 0 */
                 if (ret < 0)
                     return ret;
 
-                for (k = 0; k < IDX_PER_BLK; k++)
+                memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
+                nbytes += FS_BLOCK_SIZE;
+
+                for (k = 1; k < IDX_PER_BLK; k++)       /* k > 0, i.e. k = 1 */
                 {
                     /* load the columns using our cached idx_ary_second */
                     ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_second, false, data);
@@ -1128,7 +1131,10 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
                 }//for
             } //while
 
-            /* load the last row, from column 0 and fill idx_ary_second */
+            /* Load the last row, from column 0 and fill idx_ary_second.
+             * Here you cannot do a read after you fill idx_ary_second because the last for-loop
+             * might not be executed, and hence you must only read the pos_final bytes.
+             */
             ret = fetch_inode_data_block(&inode, INDIR_2, i, 0, idx_ary_second, true, data);
             if (ret < 0)
                 return ret;
