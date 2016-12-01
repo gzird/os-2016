@@ -1926,20 +1926,26 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
     return SUCCESS;
 }
 
-/* write an inode onto the disk */
+/* Write an inode to the disk.
+ * The callers has updates the inodes array
+ */
 int disk_write_inode(struct fs7600_inode inode, uint32_t inode_index)
 {
         struct fs7600_inode inode_block[INODES_PER_BLK];
+        uint32_t i, block_number, iblock_start, iblock_index;
 
-        uint32_t block_number = inode_start + (inode_index / INODES_PER_BLK);
+
+        block_number = inode_start + (inode_index / INODES_PER_BLK);
+
+        /* what is the index in the inodes array, that this inode block starts */
+        iblock_start = (inode_index / INODES_PER_BLK);
         /* index of the inode within its block */
-        uint32_t iblock_index = inode_index % INODES_PER_BLK;
+        iblock_index = inode_index % INODES_PER_BLK;
 
-        /* load the inode block */
-        disk->ops->read(disk, block_number, 1, inode_block);
+        for (i = 0; i < INODES_PER_BLK; i++)
+            inode_block[i] = inodes[ i + iblock_start ];
 
-        /* change the contents of the inode */
-        inode_block[ iblock_index ] = inode;
+        inode_block[iblock_index] = inode;
 
         /* write the block back to disk */
         disk->ops->write(disk, block_number, 1, inode_block);
