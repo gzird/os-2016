@@ -1428,7 +1428,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
             else
                 j = IDX_PER_BLK;
 
-            // TODO: cache idx_ary_first here
             ret = validate_inode_data_block(&inode, inode_index, INDIR_1, i, 0, idx_ary_first, NULL, &block_number);
             if (ret < 0)
                 return ret;
@@ -1539,8 +1538,8 @@ static int fs_write(const char *path, const char *buf, size_t len,
                 else    // write the data to the next rows, i.e. more that one
                 {
                     /* Copy the last columns of the last row.
-                    * Must go until j2-1 in order to write the last data with j2 and pos_final
-                    */
+                     * Must go until j2-1 in order to write the last data with j2 and pos_final
+                     */
                     for (k = j; k < j2; k++)
                     {
                         ret = validate_inode_data_block(&inode, inode_index, INDIR_2, i, k, idx_ary_first, idx_ary_second, &block_number);
@@ -1585,10 +1584,10 @@ static int fs_write(const char *path, const char *buf, size_t len,
             while (++i < i2)
             {
                 /* Load next row, from column 0 and fill idx_ary_second
-                * We fill idx_ary_second when changing i in INDIR_2.
-                */
-                // TODO: cache the indir_2 + idx_ary_first here
-
+                 * We fill idx_ary_second when changing i in INDIR_2.
+                 * TODO: cache the indir_2 + idx_ary_first here, so save some reads,
+                 * by taking k = 0, outside the loop. Only here it's possible.
+                 */
                 for (k = 0; k < IDX_PER_BLK; k++)
                 {
                     /* load the columns using our cached idx_ary_second */
@@ -1601,9 +1600,6 @@ static int fs_write(const char *path, const char *buf, size_t len,
                     nbytes += n;
                 }//for
             } //while
-
-            /* load the last row, from column 0 and fill idx_ary_second */
-            // TODO: cache the indir_2 + idx_ary_first here
 
             /* Write the last columns of the last row.
              * Must go until j2-1 in order to write the last data with j2 and pos_final
