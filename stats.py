@@ -15,10 +15,10 @@ If the prev op is the the same as the cur and the operation is continuous
 in terms of blocks, we continue to the next op until we find a different op
 or a non-continuous op of the same type.
 We count blocks in a strainforward way.
-We skip the first 4 lines of the log.
+We skip the first 2 lines of the log.
 """
 
-for i in xrange(5, len(content)):
+for i in xrange(3, len(content)):
     lst_cur    = content[i].split()
     lst_prev   = content[i-1].split()
     op_cur     = lst_cur[0]
