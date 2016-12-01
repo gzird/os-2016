@@ -64,6 +64,18 @@ enum {IDX_PER_BLK    = FS_BLOCK_SIZE / sizeof(uint32_t)};
 typedef enum {false, true} bool;
 typedef enum {DIRECT, INDIR_1, INDIR_2} case_level;
 
+/* cache element for part 3
+ * /a/b => inode(/) + name(a) => inode(a)
+ *           src    +  name   =    dst
+ */
+#define DCACHE_SIZE  50
+struct dce {
+    uint32_t src, dst;       /* source and destination inodes */
+    time_t   tm;
+    char     name[28];
+    bool     valid;
+};
+
 #endif
 
 

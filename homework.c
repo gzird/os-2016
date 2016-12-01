@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <libgen.h>
+#include <time.h>
 
 #include "fs7600.h"
 #include "blkdev.h"
@@ -35,10 +36,14 @@ int validate_inode_data_block(struct fs7600_inode *, uint32_t,
                               uint32_t *, uint32_t *, uint32_t *);
 int free_data_block_search(uint32_t *);
 int write_data_block(const char *, uint32_t, uint32_t, uint32_t);
-int update_inode_size(struct fs7600_inode *, uint32_t, uint32_t);
 int disk_write_bitmaps(bool, bool);
 int unlink_rmdir_helper(const char *, bool);
-
+/*
+ * LRU cache
+ */
+uint32_t dcache_search(uint32_t, char *);
+void dcache_add(struct dce);
+void dcache_remove(uint32_t, char *);
 
 
 extern int homework_part;       /* set by '-part n' command-line option */
@@ -96,6 +101,10 @@ const uint32_t inode_map_start = 1;
 uint32_t data_map_start, inode_start, data_start;
 uint32_t num_blocks, num_inodes, num_dblocks;
 uint32_t max_filesize;
+
+/* part3 cache LRU de cache of 50 entries */
+struct    dce * dcache;
+int       dcache_count = 0;     /* items currently in cache */
 
 
 /* init - this is called once by the FUSE framework at startup. Ignore
@@ -159,7 +168,7 @@ void* fs_init(struct fuse_conn_info *conn)
     if (disk->ops->read(disk, inode_start, sb.inode_region_sz, inodes) < 0)
     {
        fprintf(stderr, "failed to read inodes from disk.\n");
-        exit(1);
+       exit(1);
     }
 
     num_blocks    = sb.num_blocks;
@@ -169,6 +178,17 @@ void* fs_init(struct fuse_conn_info *conn)
                       + (FS_BLOCK_SIZE)/sizeof(uint32_t)
                       + (FS_BLOCK_SIZE*FS_BLOCK_SIZE)/(sizeof(uint32_t)*sizeof(uint32_t))
                     ) * FS_BLOCK_SIZE;
+
+    /* part 3 - directory entry cache init */
+    if (homework_part > 2)
+    {
+        dcache = (struct dce *) calloc(DCACHE_SIZE, sizeof(struct dce));
+        if (dcache == NULL)
+        {
+            fprintf(stderr, "calloc failed for directory entry cache with %d elements: %s\n", DCACHE_SIZE, strerror(errno));
+            exit(1);
+        }
+    }
 
     if (homework_part > 3)
         disk = cache_create(disk);
@@ -1632,7 +1652,11 @@ static int fs_write(const char *path, const char *buf, size_t len,
      * goes wrong before we reach here, on the next boot those data blocks
      * will be free.
      */
-    update_inode_size(&inode, inode_index, nbytes);
+
+    inode.size += nbytes;           /* update the inode's size */
+    inodes[inode_index] = inode;
+    disk_write_inode(inode, inode_index);
+
     disk_write_bitmaps(false, true);
 
     return nbytes;
@@ -1734,7 +1758,8 @@ struct fuse_operations fs_ops = {
 
 int path_translate(const char *path, struct path_trans *pt, struct fuse_file_info *fi)
 {
-    uint32_t i, block_number, inode_index;
+    struct dce ce;
+    uint32_t i, block_number, inode_index, dst = 0;
     const char * delimiter = "/";
     char *pathc, *token;
     bool found = false;
@@ -1782,39 +1807,61 @@ int path_translate(const char *path, struct path_trans *pt, struct fuse_file_inf
         if (!S_ISDIR(inodes[inode_index].mode))
             return -ENOENT;
 
-        /* Fetch the data block from the disk.
-         * The data bitmap block is checked relative actual block number.
-         * We should re-fetch the block even if it is the same
-         * in case some other process invalided it.
-         * TODO: Is the above logic ok? Because if the block is the same, we can save a block fetch.
-         */
-        block_number = inodes[inode_index].direct[0];
-        if (block_number && FD_ISSET(block_number - data_start, data_map))
-            disk->ops->read(disk, block_number, 1, dblock);
-        else
+        found = false;      /* token is found? */
+        switch(homework_part)
         {
-            free(dblock);
-            free(pathc);
-            return -ENOENT;
-        }
+            case 3:
+            case 4:
+                /* always keep the source index, in case we must cache the element */
+                ce.src = inode_index;
+                dst    = dcache_search(inode_index, token);     /* updates the time for hits */
+                if (dst)
+                {
+                    found       = true;
+                    inode_index = dst;
+                    break;
+                }
 
-        /* try to find the entry's inode number for each component of the path */
-        found = false;
-        for (i = 0; i < DIRENT_PER_BLK; i++)
-        {
-            if (dblock[i].valid
-                && strcmp(token, dblock[i].name) == 0
-                && FD_ISSET(dblock[i].inode, inode_map))
-            {
-                inode_index  = dblock[i].inode;
-                found = true;
-                break;
-            }
-        }
+            /* parts 1, 2 or cache miss */
+            default:
+                /* Fetch the dir entry block from the disk */
+                block_number = inodes[inode_index].direct[0];
+                if (block_number && FD_ISSET(block_number - data_start, data_map))
+                    disk->ops->read(disk, block_number, 1, dblock);
+                else
+                {
+                    free(dblock);
+                    free(pathc);
+                    return -ENOENT;
+                }
+
+                /* try to find the entry's inode number for each component of the path */
+                for (i = 0; i < DIRENT_PER_BLK; i++)
+                {
+                    if (dblock[i].valid
+                        && strcmp(token, dblock[i].name) == 0
+                        && FD_ISSET(dblock[i].inode, inode_map))
+                    {
+                        inode_index  = dblock[i].inode;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (homework_part > 2 && found)
+                {
+                    ce.dst   = inode_index;
+                    memset(ce.name, 0, sizeof(ce.name)); /* seem to be faster than                      */
+                    strcpy(ce.name, token);              /* strncpy(ce.name, token, strlen(token));     */
+                    ce.valid = true;
+                    ce.tm    = time(NULL);
+                    dcache_add(ce);
+                }
+        }//switch homework_part
 
         /* find the next token */
         token = strtok(NULL, delimiter);
-    }
+    }//while token
 
     if (!found)
     {
@@ -2319,22 +2366,6 @@ int write_data_block(const char * buf, uint32_t block_number, uint32_t pos_start
     return SUCCESS;
 }
 
-/* Increment an inode's filesize.
- * We update the inode var used in the caller function
- * We update the gloabal inodes array
- * We write the result back to the disk
- *
- * TODO: Remove this if used only in fs_write
- */
-int update_inode_size(struct fs7600_inode * inode, uint32_t inode_index, uint32_t n)
-{
-    inode->size += n;
-    inodes[inode_index] = *inode;
-    disk_write_inode(*inode, inode_index);
-
-    return SUCCESS;
-}
-
 /*
  * Write inode and data bitmaps to disk
  */
@@ -2426,6 +2457,12 @@ int unlink_rmdir_helper(const char *path, bool isDir)
         }
     }
 
+    /* remove the entry from the cache. if it exists */
+    if (homework_part > 2)
+    {
+        dcache_remove(pt.inode_index, bname);
+    }
+
     free(parent);
     free(pathc);
 
@@ -2483,5 +2520,101 @@ int unlink_rmdir_helper(const char *path, bool isDir)
     free(dblock);
 
     return SUCCESS;
+}
+
+/*
+ * LRU directory entry cache functions
+ */
+
+/*
+ * Search an entry
+ */
+uint32_t dcache_search(uint32_t src, char * name)
+{
+    int i;
+
+    for (i = 0; i < DCACHE_SIZE; i++)
+        if (dcache[i].valid
+            && dcache[i].src == src
+            && strcmp(dcache[i].name, name) == 0)
+        {
+            dcache[i].tm = time(NULL);
+
+            return dcache[i].dst;
+        }
+
+    return 0; /* item not found in cache */
+}
+
+/*
+ * Remove an entry, if it exists
+ */
+void dcache_remove(uint32_t src, char * name)
+{
+    int i;
+
+    for (i = 0; i < DCACHE_SIZE; i++)
+        if (dcache[i].src == src
+            && strcmp(dcache[i].name, name) == 0
+            && dcache[i].valid)
+        {
+            dcache[i].valid = false;
+            dcache[i].tm    = 0;
+            dcache_count--;
+
+            break;
+        }
+}
+
+/*
+ * Add an element to the cache
+ */
+void dcache_add(struct dce e)
+{
+    int i, idx;
+    time_t tm;
+
+    switch (dcache_count)
+    {
+        /* we replace an element */
+        case DCACHE_SIZE:
+            tm  = dcache[0].tm;
+            idx = 0;
+
+            for (i = 1; i < DCACHE_SIZE; i++)
+            {
+                if (dcache[i].tm < tm)
+                {
+                    tm  = dcache[i].tm;
+                    idx = i;
+                }
+            }
+
+            dcache[idx] = e;
+
+            break;
+
+        /* If cache is empty, we add an item in position 0 */
+        case 0:
+            dcache[0] = e;
+            dcache_count++;
+
+            break;
+
+        /* default is to add an element.
+         * Implies, count > 0 && count < size.
+         */
+        default:
+            for (i = 0; i < DCACHE_SIZE; i++)
+            {
+                if (!dcache[i].valid)
+                {
+                    dcache[i] = e;
+                    dcache_count++;
+
+                    break;
+                }
+            }
+    }//switch
 }
 
