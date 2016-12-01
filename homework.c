@@ -2309,6 +2309,8 @@ int write_data_block(const char * buf, uint32_t block_number, uint32_t pos_start
  * We update the inode var used in the caller function
  * We update the gloabal inodes array
  * We write the result back to the disk
+ *
+ * TODO: Remove this if used only in fs_write
  */
 int update_inode_size(struct fs7600_inode * inode, uint32_t inode_index, uint32_t n)
 {
