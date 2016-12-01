@@ -2042,7 +2042,7 @@ int mknod_mkdir_helper(const char *path, mode_t mode, bool isDir)
     {
         /* search the directory entries for free space or the same file/dir */
         found = false;
-//        for (i = DIRENT_PER_BLK - 1; i > -1; i--)
+//        for (i = DIRENT_PER_BLK; i-- > 0;)
         for (i = 0; i < DIRENT_PER_BLK; i++)
         {
             if (dblock[i].valid && FD_ISSET(dblock[i].inode, inode_map))
