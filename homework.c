@@ -825,12 +825,17 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
     struct path_trans pt;
     struct fs7600_inode inode;
     char data[1024];
-    uint32_t idx_ary_first[IDX_PER_BLK], idx_ary_second[IDX_PER_BLK];
+//     uint32_t idx_ary_first[IDX_PER_BLK], idx_ary_second[IDX_PER_BLK];
     uint32_t i, j, k, i2, j2, nbytes = 0;
     off_t size;
 
     case_level level;
     size_t pos_start, pos_final;
+
+
+    uint32_t * idx_ary_first, * idx_ary_second;
+    idx_ary_first  = (uint32_t *) calloc(IDX_PER_BLK, sizeof(uint32_t));
+    idx_ary_second = (uint32_t *) calloc(IDX_PER_BLK, sizeof(uint32_t));
 
     /* These are indices in terms of absolute values,
      * i.e. a single file can have (6 + 256 + 256^2) pointers to data blocks
@@ -1152,7 +1157,8 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
                         nbytes += FS_BLOCK_SIZE;
                     } //for
 
-                    ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_first, idx_ary_second, false, false, data);
+                    memset(data, 0, 1024);
+                    ret = fetch_inode_data_block(&inode, INDIR_2, i, j2, idx_ary_first, idx_ary_second, false, false, data);
                     if (ret < 0)
                         return ret;
 
@@ -1450,7 +1456,7 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
             /* write to dblock, update inode size, flush updated inode and dblock to disk */
             n = FS_BLOCK_SIZE - pos_start;
-            write_data_block(buf+nbytes, block_number, 0, n);
+            write_data_block(buf+nbytes, block_number, pos_start, n);
             nbytes += n;
 
             /* we immediately move to the next block, i.e. ++i, after the memcpy above */
@@ -1527,7 +1533,7 @@ static int fs_write(const char *path, const char *buf, size_t len,
 
             /* write to dblock, update inode size, flush updated inode and dblock to disk */
             n = FS_BLOCK_SIZE - pos_start;
-            write_data_block(buf+nbytes, block_number, 0, n);
+            write_data_block(buf+nbytes, block_number, pos_start, n);
             nbytes += n;
 
             /* the rest of the logic is the same as in the DIRECT case. */
@@ -1814,6 +1820,7 @@ int path_translate(const char *path, struct path_trans *pt, struct fuse_file_inf
     const char * delimiter = "/";
     char *pathc, *token;
     bool found = false;
+    struct fs7600_dirent dblock[DIRENT_PER_BLK];
 
     if (path == NULL || strlen(path) == 0)
     {
@@ -1844,10 +1851,10 @@ int path_translate(const char *path, struct path_trans *pt, struct fuse_file_inf
     if (!pathc)
         return -ENOMEM;
 
-    /* allocate memory for one data block */
-    struct fs7600_dirent * dblock = (struct fs7600_dirent *) malloc (FS_BLOCK_SIZE);
-    if (!dblock)
-        return -ENOMEM;
+//     /* allocate memory for one data block */
+//     dblock = (struct fs7600_dirent *) malloc (FS_BLOCK_SIZE);
+//     if (!dblock)
+//         return -ENOMEM;
 
     /* point to the rootdir and start the search recursively */
     inode_index = 1;
@@ -1856,7 +1863,10 @@ int path_translate(const char *path, struct path_trans *pt, struct fuse_file_inf
     {
         /* search only inside directories */
         if (!S_ISDIR(inodes[inode_index].mode))
+        {
+//             free(dblock);
             return -ENOENT;
+        }
 
         found = false;      /* token is found? */
         switch(homework_part)
@@ -1881,7 +1891,7 @@ int path_translate(const char *path, struct path_trans *pt, struct fuse_file_inf
                     disk->ops->read(disk, block_number, 1, dblock);
                 else
                 {
-                    free(dblock);
+//                     free(dblock);
                     free(pathc);
                     return -ENOENT;
                 }
@@ -1916,7 +1926,7 @@ int path_translate(const char *path, struct path_trans *pt, struct fuse_file_inf
 
     if (!found)
     {
-        free(dblock);
+//         free(dblock);
         free(pathc);
         return -ENOENT;
     }
@@ -1924,7 +1934,7 @@ int path_translate(const char *path, struct path_trans *pt, struct fuse_file_inf
     pt->inode_index = inode_index;
 
     free(pathc);
-    free(dblock);
+//     free(dblock);
 
     return SUCCESS;
 }
@@ -2682,7 +2692,6 @@ void dcache_add(struct dce e)
  * here.
  */
 
-
 /* read a block */
 void wb_read_block(uint32_t block_number, uint32_t nbytes, char * buf)
 {
@@ -2728,7 +2737,7 @@ void wb_read_block(uint32_t block_number, uint32_t nbytes, char * buf)
     wb_evict_block(wbclean[idx].block_number, idx, false);
 
     /* read the requested block and update the cache */
-    realdisk-ops->read(realdisk, block_number, 1, wbclean_pages[idx]);
+    realdisk->ops->read(realdisk, block_number, 1, wbclean_pages[idx]);
     wbclean[idx].valid = true;
     wbclean[idx].block_number = block_number;
     wbclean[idx].tm = time(NULL);
@@ -2781,11 +2790,11 @@ void wb_evict_block(uint32_t block_number, int idx, bool isDirty)
 {
     if (isDirty)
     {
-        realdisk->ops->write(realdisk, block_number, 1, wbdirty_data[idx]);
+        realdisk->ops->write(realdisk, block_number, 1, wbdirty_pages[idx]);
     }
     else
     {
-        realdisk->ops->write(realdisk, block_number, 1, wbclean_data[idx]);
+        realdisk->ops->write(realdisk, block_number, 1, wbclean_pages[idx]);
     }
 }
 
