@@ -2735,6 +2735,47 @@ void wb_read_block(uint32_t block_number, uint32_t nbytes, char * buf)
 }
 
 
+/* write a block */
+void wb_write_block(uint32_t block_number, uint32_t nbytes, char * buf)
+{
+    time_t tm;
+    int i, idx;
+
+    /* look for the block in the dirty pages first
+     * and update it if found
+     */
+    tm  = wbdirty[0].tm;
+    idx = 0;
+    for (i = 0; i < DIRTY_SIZE; i++)
+    {
+        if (wbdirty[i].valid && wbdirty[i].block_number == block_number)
+        {
+            wbdirty[i].tm = time(NULL);
+            memcpy(wbdirty_pages[i], buf + nbytes, FS_BLOCK_SIZE);
+
+            return SUCCESS;
+        }
+
+        if (wbdirty[i].tm < tm)
+        {
+            tm  = wbdirty[i].tm;
+            idx = i;
+        }
+    }
+
+    /* look for the block in the clean pages */
+    for (i = 0; i < CLEAN_SIZE; i++)
+    {
+        if (wbclean[i].valid && wbclean[i].block_number == block_number)
+        {
+            wb_evict_block(wbdirty[idx].block_number, idx, true);
+            memcpy(wbclean_pages[i], buf + nbytes, FS_BLOCK_SIZE);
+
+            return SUCCESS;
+        }
+    }
+}
+
 /* write a block back to the disk */
 void wb_evict_block(uint32_t block_number, int idx, bool isDirty)
 {
