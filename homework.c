@@ -2532,7 +2532,7 @@ int unlink_rmdir_helper(const char *path, bool isDir)
  */
 
 /*
- * Search an entry
+ * Search for an entry. The key is (src, name).
  */
 uint32_t dcache_search(uint32_t src, char * name)
 {
@@ -2552,16 +2552,16 @@ uint32_t dcache_search(uint32_t src, char * name)
 }
 
 /*
- * Remove an entry, if it exists
+ * Remove an entry, if it exists. The key is (src, name).
  */
 void dcache_remove(uint32_t src, char * name)
 {
     int i;
 
     for (i = 0; i < DCACHE_SIZE; i++)
-        if (dcache[i].src == src
-            && strcmp(dcache[i].name, name) == 0
-            && dcache[i].valid)
+        if (dcache[i].valid
+            && dcache[i].src == src
+            && strcmp(dcache[i].name, name) == 0)
         {
             dcache[i].valid = false;
             dcache_count--;
@@ -2571,12 +2571,19 @@ void dcache_remove(uint32_t src, char * name)
 }
 
 /*
- * Add an element to the cache
+ * Add an element to the cache if it doesn't exist.
  */
 void dcache_add(struct dce e)
 {
     int i, idx;
     time_t tm;
+
+    /* the tm field is also updated here in case of a hit,
+     * but the caller also sets its value. This doesn't impact
+     * cache functionality/performance since we don't use locks etc.
+     */
+    if (dcache_search(e.src, e.name))
+        return;
 
     switch (dcache_count)
     {

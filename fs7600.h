@@ -68,7 +68,7 @@ typedef enum {DIRECT, INDIR_1, INDIR_2} case_level;
  * /a/b => inode(/) + name(a) => inode(a)
  *           src    +  name   =    dst
  */
-#define DCACHE_SIZE  50
+#define DCACHE_SIZE 50
 struct dce {
     uint32_t src, dst;       /* source and destination inodes */
     time_t   tm;
