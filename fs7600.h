@@ -64,7 +64,7 @@ enum {IDX_PER_BLK    = FS_BLOCK_SIZE / sizeof(uint32_t)};
 typedef enum {false, true} bool;
 typedef enum {DIRECT, INDIR_1, INDIR_2} case_level;
 
-/* cache element for part 3
+/* directory entry cache element for part 3
  * /a/b => inode(/) + name(a) => inode(a)
  *           src    +  name   =    dst
  */
@@ -76,6 +76,16 @@ struct dce {
     bool     valid;
 };
 
-#endif
+/* write-back cache element for part 4
+ * we keep the cache data in a separate array.
+ */
+#define DIRTY_SIZE 10
+#define CLEAN_SIZE 30
+struct wbce {
+    uint32_t blknum;       /* block number */
+    time_t   tm;
+    bool     valid;
+};
 
+#endif
 

@@ -171,6 +171,10 @@ void* fs_init(struct fuse_conn_info *conn)
        exit(1);
     }
 
+    inodes[1].uid  = getuid();
+    inodes[1].gid  = getgid();
+    inodes[1].mode = S_IFDIR | 0777;
+
     num_blocks    = sb.num_blocks;
     num_dblocks   = sb.num_blocks - data_start;
     num_inodes    = sb.inode_region_sz * INODES_PER_BLK;
@@ -2628,4 +2632,11 @@ void dcache_add(struct dce e)
             }
     }//switch
 }
+
+
+/*
+ * LRU write-back cache functions
+ * To keeps things simple with dcache, we separate the logic of write-back cache
+ * here.
+ */
 
