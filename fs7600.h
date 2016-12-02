@@ -82,7 +82,7 @@ struct dce {
 #define DIRTY_SIZE 10
 #define CLEAN_SIZE 30
 struct wbce {
-    uint32_t blknum;       /* block number */
+    uint32_t block_number;       /* block number */
     time_t   tm;
     bool     valid;
 };

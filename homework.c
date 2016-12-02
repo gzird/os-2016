@@ -102,9 +102,16 @@ uint32_t data_map_start, inode_start, data_start;
 uint32_t num_blocks, num_inodes, num_dblocks;
 uint32_t max_filesize;
 
-/* part3 cache LRU de cache of 50 entries */
+/* part3 cache LRU directoy entry cache of 50 entries */
 struct    dce * dcache;
 int       dcache_count = 0;     /* items currently in cache */
+
+/* part4 write-back block cache */
+struct wbce * wbclean, * wbdirty;
+int clean_count = 0, dirty_count = 0;
+/* the actual blocks that are cached */
+char * wbclean_pages[CLEAN_SIZE], * wbdirty_pages[DIRTY_SIZE];
+struct blkdev *realdisk;
 
 
 /* init - this is called once by the FUSE framework at startup. Ignore
@@ -195,7 +202,42 @@ void* fs_init(struct fuse_conn_info *conn)
     }
 
     if (homework_part > 3)
+    {
+        int i;
+
+        realdisk = disk;            /* we use this to read/write from the "actual" disk */
         disk = cache_create(disk);
+
+        /* allocate mem for cache */
+        for (i = 0; i < CLEAN_SIZE; i++)
+        {
+            wbclean_pages[i] = (char *) malloc (FS_BLOCK_SIZE * sizeof(char));
+            if (wbclean_pages[i] == NULL)
+            {
+                fprintf(stderr, "calloc failed for write-back cache data: %s\n", strerror(errno));
+                exit(1);
+            }
+        }
+
+        for (i = 0; i < DIRTY_SIZE; i++)
+        {
+            wbdirty_pages[i] = (char *) malloc (FS_BLOCK_SIZE * sizeof(char));
+            if (wbclean_pages[i] == NULL)
+            {
+                fprintf(stderr, "calloc failed for write-back cache data: %s\n", strerror(errno));
+                exit(1);
+            }
+        }
+
+        wbclean = (struct wbce *) calloc (CLEAN_SIZE, sizeof(struct wbce));
+        wbdirty = (struct wbce *) calloc (DIRTY_SIZE, sizeof(struct wbce));
+
+        if (wbclean == NULL || wbdirty == NULL)
+        {
+            fprintf(stderr, "calloc failed for write-back cache: %s\n", strerror(errno));
+            exit(1);
+        }
+    }
 
     return NULL;
 }
@@ -2639,4 +2681,70 @@ void dcache_add(struct dce e)
  * To keeps things simple with dcache, we separate the logic of write-back cache
  * here.
  */
+
+
+/* read a block */
+void wb_read_block(uint32_t block_number, uint32_t nbytes, char * buf)
+{
+    time_t tm;
+    int i, idx;
+
+    /* look for the block in the dirty pages first */
+    for (i = 0; i < DIRTY_SIZE; i++)
+    {
+        if (wbdirty[i].valid && wbdirty[i].block_number == block_number)
+        {
+            wbdirty[i].tm = time(NULL);
+            memcpy(buf + nbytes, wbdirty_pages[i], FS_BLOCK_SIZE);
+
+            return SUCCESS;
+        }
+    }
+
+    /* look for the block in the clean pages, while keeping track of the LRU element */
+    tm  = wbclean[0].tm;
+    idx = 0;
+    for (i = 0; i < CLEAN_SIZE; i++)
+    {
+        if (wbclean[i].valid && wbclean[i].block_number == block_number)
+        {
+            wbclean[i].tm = time(NULL);
+            memcpy(buf + nbytes, wbclean_pages[i], FS_BLOCK_SIZE);
+
+            return SUCCESS;
+        }
+
+        if (wbclean[i].tm < tm)
+        {
+            tm  = wbclean[i].tm;
+            idx = i;
+        }
+    }
+
+    /* we didn't find the block in cache so we evict the LRU block,
+     * and read the requested block from the disk
+     */
+    wbclean[idx].valid = false;
+    wb_evict_block(wbclean[idx].block_number, idx, false);
+
+    /* read the requested block and update the cache */
+    realdisk-ops->read(realdisk, block_number, 1, wbclean_pages[idx]);
+    wbclean[idx].valid = true;
+    wbclean[idx].block_number = block_number;
+    wbclean[idx].tm = time(NULL);
+}
+
+
+/* write a block back to the disk */
+void wb_evict_block(uint32_t block_number, int idx, bool isDirty)
+{
+    if (isDirty)
+    {
+        realdisk->ops->write(realdisk, block_number, 1, wbdirty_data[idx]);
+    }
+    else
+    {
+        realdisk->ops->write(realdisk, block_number, 1, wbclean_data[idx]);
+    }
+}
 
