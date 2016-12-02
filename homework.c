@@ -704,7 +704,12 @@ static int fs_rename(const char *src_path, const char *dst_path)
         return -EEXIST;
     }
 
-    /* copy new name, write to disk and free the memory */
+    /* remove the cache entry, copy new name, write to disk and free the memory */
+    if (homework_part > 2)
+    {
+        dcache_remove(pt.inode_index, bname);
+    }
+
     strcpy(dblock[idx].name, bname2);
     disk->ops->write(disk, block_number, 1, dblock);
 
