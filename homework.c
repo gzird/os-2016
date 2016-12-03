@@ -824,8 +824,8 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
 {
     struct path_trans pt;
     struct fs7600_inode inode;
-    char data[1024];
-//     uint32_t idx_ary_first[IDX_PER_BLK], idx_ary_second[IDX_PER_BLK];
+    char data[FS_BLOCK_SIZE];
+    uint32_t idx_ary_first[IDX_PER_BLK], idx_ary_second[IDX_PER_BLK];
     uint32_t i, j, k, i2, j2, nbytes = 0;
     off_t size;
 
@@ -833,9 +833,10 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
     size_t pos_start, pos_final;
 
 
-    uint32_t * idx_ary_first, * idx_ary_second;
-    idx_ary_first  = (uint32_t *) calloc(IDX_PER_BLK, sizeof(uint32_t));
-    idx_ary_second = (uint32_t *) calloc(IDX_PER_BLK, sizeof(uint32_t));
+//     uint32_t * idx_ary_first, * idx_ary_second;
+//     char * data = (char *) calloc(FS_BLOCK_SIZE, sizeof(char));
+//     idx_ary_first  = (uint32_t *) calloc(IDX_PER_BLK, sizeof(uint32_t));
+//     idx_ary_second = (uint32_t *) calloc(IDX_PER_BLK, sizeof(uint32_t));
 
     /* These are indices in terms of absolute values,
      * i.e. a single file can have (6 + 256 + 256^2) pointers to data blocks
@@ -890,6 +891,7 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
     /* Same as: offset + len > size. Writing it in next form, we "cache" the (size - offset) calculation. */
     if (len > size - offset)
         len = size - offset;
+
 
     /* Based on the file size, we know that we have a valid offset and len. */
     /* These are the actual indexs of the first and last elements in the first and last data blocks */
@@ -1108,9 +1110,9 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
                 i = 0;
                 j = 0;
                 /* we have crossed from case INDIR_1, therefore pos_start
-                * has been used and we can reset it here. This avoids puting the
-                * block fetch and memcpy inside the if-else stmt.
-                */
+                 * has been used and we can reset it here. This avoids puting the
+                 * block fetch and memcpy inside the if-else stmt.
+                 */
                 pos_start = 0;
             }
 
@@ -1122,13 +1124,13 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
 
 
             /* there is the case where we start and end in the same row.
-            * so just grab the data of the respected columns and exit the switch.
-            */
+             * so just grab the data of the respected columns and exit the switch.
+             */
             if (i == i2)
             {
                 /* this if-else stmt uses the same row, so we don't need to look
-                * into another indir_2 row
-                */
+                 * into another indir_2 row
+                 */
                 if (j == j2)    //same row and column
                 {
                     if (start_in_indir2)
@@ -1145,8 +1147,13 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
                 else    // grab the data from the next rows, i.e. more that one
                 {
                     /* Copy the last columns of the last row.
-                    * Must go until j2-1 in order to pull the last data with j2 and pos_final
-                    */
+                     * Must go until j2-1 in order to pull the last data with j2 and pos_final
+                     */
+                    printf("=====>>> BEFORE j: %u, j2: %u, pos_start: %u, pos_final: %u, offset: %lld, len: %u, nbytes: %u, size: %u\n", j, j2, pos_start, pos_final, offset, len, nbytes, size);
+
+
+//                     printf("==========================================>>> BEFORE size: %u \n",size);
+
                     for (k = j; k < j2; k++)
                     {
                         ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_first, idx_ary_second, false, false, data);
@@ -1157,8 +1164,11 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
                         nbytes += FS_BLOCK_SIZE;
                     } //for
 
-                    memset(data, 0, 1024);
-                    ret = fetch_inode_data_block(&inode, INDIR_2, i, j2, idx_ary_first, idx_ary_second, false, false, data);
+//                     memset(data, 0, 1024);
+
+                     printf("====>>> AFTER k: %u, j: %u, j2: %u, pos_start: %u, pos_final: %u, offset: %u, len: %u, nbytes: %u, size: %u \n", k, j, j2, pos_start, pos_final, offset, len, nbytes, size);
+
+                    ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_first, idx_ary_second, false, false, data);
                     if (ret < 0)
                         return ret;
 
@@ -1967,7 +1977,7 @@ void inode_to_stat(struct fs7600_inode * inode, uint32_t inode_index, struct sta
  * i is an index for the case of DIRECT and INDIR_1.
  * i,j are indices for the case of INDIR_2.
  * We pay the overhead of calling a function with a lot of args.
- * So manu args...
+ * So many args...
  */
 int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32_t i,
                            uint32_t j, uint32_t * idx_ary_first, uint32_t * idx_ary_second,
