@@ -39,12 +39,14 @@ int write_data_block(const char *, uint32_t, uint32_t, uint32_t);
 int disk_write_bitmaps(bool, bool);
 int unlink_rmdir_helper(const char *, bool);
 /*
- * LRU cache
+ * LRU directory entry cache
  */
 uint32_t dcache_search(uint32_t, char *);
 void dcache_add(struct dce);
 void dcache_remove(uint32_t, char *);
-
+/*
+ * LRU write-back cache
+ */
 
 extern int homework_part;       /* set by '-part n' command-line option */
 
@@ -2685,7 +2687,7 @@ void dcache_add(struct dce e)
  */
 
 /* read a block */
-void wb_read_block(uint32_t block_number, uint32_t nbytes, char * buf)
+int wb_read_block(uint32_t block_number, char * buf)
 {
     time_t tm;
     int i, idx;
@@ -2696,7 +2698,7 @@ void wb_read_block(uint32_t block_number, uint32_t nbytes, char * buf)
         if (wbdirty[i].valid && wbdirty[i].block_number == block_number)
         {
             wbdirty[i].tm = time(NULL);
-            memcpy(buf + nbytes, wbdirty_pages[i], FS_BLOCK_SIZE);
+            memcpy(buf, wbdirty_pages[i], FS_BLOCK_SIZE);
 
             return SUCCESS;
         }
@@ -2710,7 +2712,7 @@ void wb_read_block(uint32_t block_number, uint32_t nbytes, char * buf)
         if (wbclean[i].valid && wbclean[i].block_number == block_number)
         {
             wbclean[i].tm = time(NULL);
-            memcpy(buf + nbytes, wbclean_pages[i], FS_BLOCK_SIZE);
+            memcpy(buf, wbclean_pages[i], FS_BLOCK_SIZE);
 
             return SUCCESS;
         }
@@ -2737,7 +2739,7 @@ void wb_read_block(uint32_t block_number, uint32_t nbytes, char * buf)
 
 
 /* write a block */
-void wb_write_block(uint32_t block_number, uint32_t nbytes, char * buf)
+void wb_write_block(uint32_t block_number, char * buf)
 {
     time_t tm;
     int i, idx;
@@ -2770,7 +2772,7 @@ void wb_write_block(uint32_t block_number, uint32_t nbytes, char * buf)
         if (wbclean[i].valid && wbclean[i].block_number == block_number)
         {
             wb_evict_block(wbdirty[idx].block_number, idx, true);
-            memcpy(wbclean_pages[i], buf + nbytes, FS_BLOCK_SIZE);
+            memcpy(wbclean_pages[i], buf, FS_BLOCK_SIZE);
 
             return SUCCESS;
         }
