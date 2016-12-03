@@ -23,7 +23,7 @@ We then write and read file using the following two methods.
 We use a block size of 1024 bytes.
 ```
 unlink rootfs/file.max
-yes A | dd bs=1024 count=65798 of=rootfs/file.max
+yes A | dd oflag=direct bs=1024 count=65798 of=rootfs/file.max
 ```
 
 ### Using for loop and echo
