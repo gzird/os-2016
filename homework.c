@@ -832,12 +832,6 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
     case_level level;
     size_t pos_start, pos_final;
 
-
-//     uint32_t * idx_ary_first, * idx_ary_second;
-//     char * data = (char *) calloc(FS_BLOCK_SIZE, sizeof(char));
-//     idx_ary_first  = (uint32_t *) calloc(IDX_PER_BLK, sizeof(uint32_t));
-//     idx_ary_second = (uint32_t *) calloc(IDX_PER_BLK, sizeof(uint32_t));
-
     /* These are indices in terms of absolute values,
      * i.e. a single file can have (6 + 256 + 256^2) pointers to data blocks
      * and the data is indexed starting by zero, i.e. 0..(6 + 1024 + 1024^2 - 1)
@@ -891,7 +885,6 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
     /* Same as: offset + len > size. Writing it in next form, we "cache" the (size - offset) calculation. */
     if (len > size - offset)
         len = size - offset;
-
 
     /* Based on the file size, we know that we have a valid offset and len. */
     /* These are the actual indexs of the first and last elements in the first and last data blocks */
@@ -1149,12 +1142,15 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
                     /* Copy the last columns of the last row.
                      * Must go until j2-1 in order to pull the last data with j2 and pos_final
                      */
-                    printf("=====>>> BEFORE j: %u, j2: %u, pos_start: %u, pos_final: %u, offset: %lld, len: %u, nbytes: %u, size: %u\n", j, j2, pos_start, pos_final, offset, len, nbytes, size);
 
+                    ret = fetch_inode_data_block(&inode, INDIR_2, i, j, idx_ary_first, idx_ary_second, false, false, data);
+                    if (ret < 0)
+                            return ret;
 
-//                     printf("==========================================>>> BEFORE size: %u \n",size);
+                    memcpy(buf+nbytes, &data[pos_start], FS_BLOCK_SIZE - pos_start);
+                    nbytes += FS_BLOCK_SIZE - pos_start;
 
-                    for (k = j; k < j2; k++)
+                    for (k = j+1; k < j2; k++)
                     {
                         ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_first, idx_ary_second, false, false, data);
                         if (ret < 0)
@@ -1162,13 +1158,10 @@ static int fs_read(const char *path, char *buf, size_t len, off_t offset,
 
                         memcpy(buf+nbytes, data, FS_BLOCK_SIZE);
                         nbytes += FS_BLOCK_SIZE;
+
                     } //for
 
-//                     memset(data, 0, 1024);
-
-                     printf("====>>> AFTER k: %u, j: %u, j2: %u, pos_start: %u, pos_final: %u, offset: %u, len: %u, nbytes: %u, size: %u \n", k, j, j2, pos_start, pos_final, offset, len, nbytes, size);
-
-                    ret = fetch_inode_data_block(&inode, INDIR_2, i, k, idx_ary_first, idx_ary_second, false, false, data);
+                    ret = fetch_inode_data_block(&inode, INDIR_2, i, j2, idx_ary_first, idx_ary_second, false, false, data);
                     if (ret < 0)
                         return ret;
 
@@ -1861,11 +1854,6 @@ int path_translate(const char *path, struct path_trans *pt, struct fuse_file_inf
     if (!pathc)
         return -ENOMEM;
 
-//     /* allocate memory for one data block */
-//     dblock = (struct fs7600_dirent *) malloc (FS_BLOCK_SIZE);
-//     if (!dblock)
-//         return -ENOMEM;
-
     /* point to the rootdir and start the search recursively */
     inode_index = 1;
     token = strtok(pathc, delimiter);
@@ -1873,10 +1861,7 @@ int path_translate(const char *path, struct path_trans *pt, struct fuse_file_inf
     {
         /* search only inside directories */
         if (!S_ISDIR(inodes[inode_index].mode))
-        {
-//             free(dblock);
             return -ENOENT;
-        }
 
         found = false;      /* token is found? */
         switch(homework_part)
@@ -1901,7 +1886,6 @@ int path_translate(const char *path, struct path_trans *pt, struct fuse_file_inf
                     disk->ops->read(disk, block_number, 1, dblock);
                 else
                 {
-//                     free(dblock);
                     free(pathc);
                     return -ENOENT;
                 }
@@ -1936,7 +1920,6 @@ int path_translate(const char *path, struct path_trans *pt, struct fuse_file_inf
 
     if (!found)
     {
-//         free(dblock);
         free(pathc);
         return -ENOENT;
     }
@@ -1944,7 +1927,6 @@ int path_translate(const char *path, struct path_trans *pt, struct fuse_file_inf
     pt->inode_index = inode_index;
 
     free(pathc);
-//     free(dblock);
 
     return SUCCESS;
 }
