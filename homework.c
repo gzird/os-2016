@@ -47,6 +47,9 @@ void dcache_remove(uint32_t, char *);
 /*
  * LRU write-back cache
  */
+int wb_read_block(uint32_t, char *);
+int wb_write_block(uint32_t, char *);
+
 
 extern int homework_part;       /* set by '-part n' command-line option */
 
@@ -69,10 +72,24 @@ int cache_nops(struct blkdev *dev)
 }
 int cache_read(struct blkdev *dev, int first, int n, void *buf)
 {
+    int i;
+
+    for (i = 0; i < n; i++)
+    {
+        wb_read_block( (uint32_t) (first + i), (buf + i * FS_BLOCK_SIZE));
+    }
+
     return SUCCESS;
 }
 int cache_write(struct blkdev *dev, int first, int n, void *buf)
 {
+    int i;
+
+    for (i = 0; i < n; i++)
+    {
+        wb_write_block( (uint32_t) (first + i), (buf + i * FS_BLOCK_SIZE));
+    }
+
     return SUCCESS;
 }
 struct blkdev_ops cache_ops = {
@@ -110,8 +127,7 @@ int       dcache_count = 0;     /* items currently in cache */
 
 /* part4 write-back block cache */
 struct wbce * wbclean, * wbdirty;
-int clean_count = 0, dirty_count = 0;
-/* the actual blocks that are cached */
+/* the actual blocks that are cached in write-back */
 char * wbclean_pages[CLEAN_SIZE], * wbdirty_pages[DIRTY_SIZE];
 struct blkdev *realdisk;
 
@@ -223,8 +239,8 @@ void* fs_init(struct fuse_conn_info *conn)
 
         for (i = 0; i < DIRTY_SIZE; i++)
         {
-            wbdirty_pages[i] = (char *) malloc (FS_BLOCK_SIZE * sizeof(char));
-            if (wbclean_pages[i] == NULL)
+            wbdirty_pages[i] = (char *) malloc(FS_BLOCK_SIZE * sizeof(char));
+            if (wbdirty_pages[i] == NULL)
             {
                 fprintf(stderr, "calloc failed for write-back cache data: %s\n", strerror(errno));
                 exit(1);
@@ -1622,7 +1638,15 @@ static int fs_write(const char *path, const char *buf, size_t len,
                     /* Copy the last columns of the last row.
                      * Must go until j2-1 in order to write the last data with j2 and pos_final
                      */
-                    for (k = j; k < j2; k++)
+                    ret = validate_inode_data_block(&inode, inode_index, INDIR_2, i, j, idx_ary_first, idx_ary_second, &block_number);
+                    if (ret < 0)
+                        return ret;
+
+                    n = FS_BLOCK_SIZE - pos_start;
+                    write_data_block(buf+nbytes, block_number, pos_start, n);
+                    nbytes += n;
+
+                    for (k = j+1; k < j2; k++)
                     {
                         ret = validate_inode_data_block(&inode, inode_index, INDIR_2, i, k, idx_ary_first, idx_ary_second, &block_number);
                         if (ret < 0)
@@ -1993,7 +2017,7 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
                 default:
                     /* only fetch data if valid */
                     block_number = idx_ary_first[i];
-                    if (FD_ISSET(block_number - data_start, data_map))
+                    if (block_number && block_number < num_blocks && FD_ISSET(block_number - data_start, data_map))
                         disk->ops->read(disk, block_number, 1, data);
                     else
                         return -EINVAL;
@@ -2016,7 +2040,7 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
 
                     /* is indir_2[i] valid? (2nd level of indices) */
                     block_number = idx_ary_first[i];
-                    if (FD_ISSET(block_number - data_start, data_map))
+                    if (block_number && block_number < num_blocks && FD_ISSET(block_number - data_start, data_map))
                         disk->ops->read(disk, block_number, 1, idx_ary_second);
                     else
                         return -EINVAL;
@@ -2024,7 +2048,7 @@ int fetch_inode_data_block(struct fs7600_inode * inode, case_level level, uint32
                 default:
                     /* only fetch data if valid */
                     block_number = idx_ary_second[j];
-                    if (block_number && FD_ISSET(block_number - data_start, data_map))
+                    if (block_number && block_number < num_blocks &&  FD_ISSET(block_number - data_start, data_map))
                         disk->ops->read(disk, block_number, 1, data);
                     else
                         return -EINVAL;
@@ -2512,18 +2536,12 @@ int unlink_rmdir_helper(const char *path, bool isDir)
         }
     }
 
-    /* remove the entry from the cache. if it exists */
-    if (homework_part > 2)
-    {
-        dcache_remove(pt.inode_index, bname);
-    }
-
     free(parent);
-    free(pathc);
 
     if (!found)
     {
         free(dblock);
+        free(pathc);
         return -ENOENT;
     }
     else
@@ -2547,7 +2565,7 @@ int unlink_rmdir_helper(const char *path, bool isDir)
                     {
                         free(dblock);
                         free(dir_dblock);
-
+                        free(pathc);
                         return -ENOTEMPTY;
                     }
                 }
@@ -2562,9 +2580,21 @@ int unlink_rmdir_helper(const char *path, bool isDir)
             if (ret < 0)
             {
                 free(dblock);
+                free(pathc);
                 return ret;
             }
         }
+
+        /* Remove the entry from the cache. if it exists.
+         * Do not move the next if block upstairs.
+         */
+        if (homework_part > 2)
+        {
+            dcache_remove(pt.inode_index, bname);
+        }
+
+        /* need pathc for bname */
+        free(pathc);
 
         /* clear the inode, write the direntry block */
         FD_CLR(inode_index, inode_map);
@@ -2690,7 +2720,7 @@ void dcache_add(struct dce e)
 int wb_read_block(uint32_t block_number, char * buf)
 {
     time_t tm;
-    int i, idx;
+    int i, idx = -1;
 
     /* look for the block in the dirty pages first */
     for (i = 0; i < DIRTY_SIZE; i++)
@@ -2705,8 +2735,6 @@ int wb_read_block(uint32_t block_number, char * buf)
     }
 
     /* look for the block in the clean pages, while keeping track of the LRU element */
-    tm  = wbclean[0].tm;
-    idx = 0;
     for (i = 0; i < CLEAN_SIZE; i++)
     {
         if (wbclean[i].valid && wbclean[i].block_number == block_number)
@@ -2717,51 +2745,64 @@ int wb_read_block(uint32_t block_number, char * buf)
             return SUCCESS;
         }
 
-        if (wbclean[i].tm < tm)
+        /* Keep track of any invalid elem */
+        if (!wbclean[i].valid)
         {
-            tm  = wbclean[i].tm;
             idx = i;
         }
     }
 
-    /* we didn't find the block in cache so we evict the LRU block,
+    /* we didn't find the block in cache so we evict the LRU clean block,
      * and read the requested block from the disk
      */
-    wbclean[idx].valid = false;
-    wb_evict_block(wbclean[idx].block_number, idx, false);
+    if (idx == -1)      /* if there was no invalid elem, the cache is full */
+    {
+        idx = 0;
+        tm  = wbclean[0].tm;
+        for (i = 1; i < CLEAN_SIZE; i++)
+            if (wbclean[i].tm < tm)
+            {
+                idx = i;
+                tm  = wbclean[i].tm;
+            }
+    }
+
+    /* evict the block to disk ONLY if it is valid */
+    if (wbclean[idx].valid)
+        realdisk->ops->write(realdisk, wbclean[idx].block_number, 1, wbclean_pages[idx]);
 
     /* read the requested block and update the cache */
     realdisk->ops->read(realdisk, block_number, 1, wbclean_pages[idx]);
-    wbclean[idx].valid = true;
     wbclean[idx].block_number = block_number;
-    wbclean[idx].tm = time(NULL);
+    wbclean[idx].tm           = time(NULL);
+    wbclean[idx].valid        = true;
+
+    memcpy(buf, wbclean_pages[idx], FS_BLOCK_SIZE);
+
+    return SUCCESS;
 }
 
 
 /* write a block */
-void wb_write_block(uint32_t block_number, char * buf)
+int wb_write_block(uint32_t block_number, char * buf)
 {
     time_t tm;
-    int i, idx;
+    int i, idx = -1;
 
-    /* look for the block in the dirty pages first
-     * and update it if found
-     */
-    tm  = wbdirty[0].tm;
-    idx = 0;
+    /* look for the block in the dirty pages first and update it if found */
     for (i = 0; i < DIRTY_SIZE; i++)
     {
         if (wbdirty[i].valid && wbdirty[i].block_number == block_number)
         {
             wbdirty[i].tm = time(NULL);
-            memcpy(wbdirty_pages[i], buf + nbytes, FS_BLOCK_SIZE);
+            memcpy(wbdirty_pages[i], buf, FS_BLOCK_SIZE);
 
             return SUCCESS;
         }
 
-        if (wbdirty[i].tm < tm)
+        /* Keep track of any invalid elem */
+        if (!wbdirty[i].valid)
         {
-            tm  = wbdirty[i].tm;
             idx = i;
         }
     }
@@ -2771,24 +2812,38 @@ void wb_write_block(uint32_t block_number, char * buf)
     {
         if (wbclean[i].valid && wbclean[i].block_number == block_number)
         {
-            wb_evict_block(wbdirty[idx].block_number, idx, true);
-            memcpy(wbclean_pages[i], buf, FS_BLOCK_SIZE);
-
-            return SUCCESS;
+            wbclean[i].tm           = 0;
+            wbclean[i].valid        = false;
+            break;
         }
     }
-}
 
-/* write a block back to the disk */
-void wb_evict_block(uint32_t block_number, int idx, bool isDirty)
-{
-    if (isDirty)
+    /* we didn't found the block in the clean cache so evict the LRU dirty block
+     * and load the target block from the disk and write to it
+     */
+    if (idx == -1)      /* if there was no invalid elem, the cache is full */
     {
-        realdisk->ops->write(realdisk, block_number, 1, wbdirty_pages[idx]);
+        idx = 0;
+        tm  = wbdirty[0].tm;
+        for (i = 1; i < DIRTY_SIZE; i++)
+            if (wbdirty[i].tm < tm)
+            {
+                idx = i;
+                tm  = wbdirty[i].tm;
+            }
     }
-    else
-    {
-        realdisk->ops->write(realdisk, block_number, 1, wbclean_pages[idx]);
-    }
+
+    /* evict the LRU dirty block to the disk, only if it is valid */
+    if (wbdirty[idx].valid)
+        realdisk->ops->write(realdisk, wbdirty[idx].block_number, 1, wbdirty_pages[idx]);
+
+    /* copy the data to the LRU dirty and update its info */
+    memcpy(wbdirty_pages[idx], buf, FS_BLOCK_SIZE);
+
+    wbdirty[idx].block_number = block_number;
+    wbdirty[idx].tm           = time(NULL);
+    wbdirty[idx].valid        = true;
+
+    return SUCCESS;
 }
 

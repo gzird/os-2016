@@ -3,10 +3,26 @@ Basic Testing
 This documents describes a couple of tests apart from the ones posted on piazza.
 
 # Table of Contents
-1. [Max filesize test]
-    1. [Using dd]
-    2. [Using a for loop and echo]
+1. Testing indirect pointers
+2. Max filesize test
+    1. Using dd
+    2. Using a for loop and echo
 
+## Testing indirect pointers
+In order to test `fs_read` and `fs_write` with indirect pointers we run the
+following tests.
+
+To stay within indir_1 we want more than 6 x 1024 bytes
+but less than (6 + 256) x 1024. We chose to write 510 x 540 = 275400 bytes.
+```
+yes A | dd oflag=direct bs=510 count=540 of=rootfs/file.A
+dd iflag=direct if=rootfs/file.A bs=510 | cksum
+```
+To use the indir_2 pointers we chose to write 510 x 132112 = 67377120 bytes.
+```
+yes A | dd oflag=direct bs=510 count=132112 of=rootfs/file.max
+dd iflag=direct if=rootfs/file.A bs=510 | cksum
+```
 
 ## Max filesize test
 
