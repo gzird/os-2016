@@ -1804,6 +1804,36 @@ static int fs_statfs(const char *path, struct statvfs *st)
     return 0;
 }
 
+static void fs_destroy(void *ignore)
+{
+    int i;
+
+    /* free allocated memory */
+    free(inodes);
+    free(inode_map);
+    free(data_map);
+
+    if (homework_part > 2)
+        free(dcache);
+
+    if (homework_part > 3)
+    {
+        /* flush the dirty cache to the disk */
+        for (i = 0; i < DIRTY_SIZE; i++)
+            if (wbdirty[i].valid)
+                realdisk->ops->write(realdisk, wbdirty[i].block_number, 1, wbdirty_pages[i]);
+
+        free(wbclean);
+        free(wbdirty);
+
+        for (i = 0; i < CLEAN_SIZE; i++)
+            free(wbclean_pages[i]);
+
+        for (i = 0; i < DIRTY_SIZE; i++)
+            free(wbdirty_pages[i]);
+    }
+}
+
 /* operations vector. Please don't rename it, as the skeleton code in
  * misc.c assumes it is named 'fs_ops'.
  */
@@ -1826,6 +1856,7 @@ struct fuse_operations fs_ops = {
     .write = fs_write,
     .release = fs_release,
     .statfs = fs_statfs,
+    .destroy = fs_destroy,
 };
 
 /*
